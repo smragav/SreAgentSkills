@@ -18,18 +18,39 @@ See references/report-layout.md for the input shape.
 
 import html
 import os
+import sys
 from datetime import datetime, timezone
+
+
+def _bootstrap_shared_tools():
+    """Make the shared report_render importable both in the repo and when the
+    deploy step bundles the shared tools next to this file."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    probe = here
+    for _ in range(6):
+        candidate = os.path.join(probe, "shared", "tools")
+        if os.path.isdir(candidate) and candidate not in sys.path:
+            sys.path.insert(0, candidate)
+            break
+        probe = os.path.dirname(probe)
+
+
+_bootstrap_shared_tools()
+from report_render import document_shell  # noqa: E402
 
 OUTPUT_DIR = "/mnt/data"
 
-# Confidence band presentation: pill background, text, border, and bar fill.
-BAND_PILL = {
-    "Very high": ("#0f766e1A", "#0f766e", "#0f766e55"),
-    "High": ("#15803d1A", "#15803d", "#15803d55"),
-    "Medium": ("#b453091A", "#b45309", "#b4530955"),
-    "Low": ("#b91c1c1A", "#b91c1c", "#b91c1c55"),
+# Confidence band to its shared pill class and bar colour variable, so the
+# palette adapts to the light and dark theme.
+BAND_CLASS = {"Very high": "c-vhigh", "High": "c-high", "Medium": "c-medium", "Low": "c-low"}
+BAND_VAR = {
+    "Very high": "var(--conf-very-high)",
+    "High": "var(--conf-high)",
+    "Medium": "var(--conf-medium)",
+    "Low": "var(--conf-low)",
 }
-BAND_BAR = {"Very high": "#16a34a", "High": "#16a34a", "Medium": "#d97706", "Low": "#dc2626"}
 CURRENCY_SYMBOL = {"USD": "$", "EUR": "\u20ac", "GBP": "\u00a3", "JPY": "\u00a5"}
 
 
@@ -71,7 +92,7 @@ def _bar_rows(items, currency):
         out.append(
             "<div class='chart-row money'>"
             f"<div class='chart-name'>{_esc(item.get('name', ''))}</div>"
-            f"<div class='chart-bar'><div style='width:{width:.1f}%;background:#0f766e'></div></div>"
+            f"<div class='chart-bar'><div style='width:{width:.1f}%;background:var(--accent)'></div></div>"
             f"<div class='chart-score'>{_money(cost, currency)}</div></div>"
         )
     return "".join(out)
@@ -90,7 +111,7 @@ def _candidate_chart(candidates):
         out.append(
             "<div class='chart-row'>"
             f"<div class='chart-name'>{_esc(candidate.get('resource', ''))}</div>"
-            f"<div class='chart-bar'><div style='width:{width:.1f}%;background:{BAND_BAR.get(band, '#16a34a')}'></div></div>"
+            f"<div class='chart-bar'><div style='width:{width:.1f}%;background:{BAND_VAR.get(band, 'var(--conf-high)')}'></div></div>"
             f"<div class='chart-score'>{int(round(confidence))}</div></div>"
         )
     return "".join(out)
@@ -111,7 +132,7 @@ def _render_candidates(candidates, currency):
     cards = (
         "<div class='grid'>"
         f"<div class='card'><h3>Total candidates</h3><div class='num'>{len(candidates)}</div></div>"
-        f"<div class='card'><h3>Est. monthly savings*</h3><div class='num' style='color:#15803d'>{_money(total_saving, currency)}</div></div>"
+        f"<div class='card'><h3>Est. monthly savings*</h3><div class='num' style='color:var(--conf-very-high)'>{_money(total_saving, currency)}</div></div>"
         f"<div class='card'><h3>Very high confidence</h3><div class='num'>{counts['Very high']}</div></div>"
         f"<div class='card'><h3>High confidence</h3><div class='num'>{counts['High']}</div></div>"
         f"<div class='card'><h3>Medium or low confidence</h3><div class='num'>{counts['Medium'] + counts['Low']}</div></div>"
@@ -153,8 +174,8 @@ def _render_candidates(candidates, currency):
     for index, candidate in enumerate(ordered, start=1):
         confidence = float(candidate.get("confidence", 0.0) or 0.0)
         band = candidate.get("band") or _band_from_confidence(confidence)
-        pill_bg, pill_text, pill_border = BAND_PILL.get(band, BAND_PILL["Low"])
-        bar_color = BAND_BAR.get(band, "#16a34a")
+        band_class = BAND_CLASS.get(band, "c-low")
+        bar_color = BAND_VAR.get(band, "var(--conf-high)")
         if candidate.get("excluded"):
             saving_cell = (
                 "<strong>Excluded</strong>"
@@ -190,7 +211,7 @@ def _render_candidates(candidates, currency):
             f"<td>{saving_cell}</td>"
             f"<td><div class='bar-wrap'><div class='bar-fill' style='width:{bar_width:.0f}%;background:{bar_color}'></div>"
             f"<span class='bar-label'>{int(round(confidence))}</span></div></td>"
-            f"<td><span class='pill' style='background:{pill_bg};color:{pill_text};border-color:{pill_border}'>{_esc(band)}</span></td>"
+            f"<td><span class='pill {band_class}'>{_esc(band)}</span></td>"
             f"<td>{_esc(candidate.get('reason', ''))}</td>"
             f"<td>{_esc(candidate.get('next_step', ''))}</td>"
             f"<td>{delete_cell}</td></tr>"
@@ -256,58 +277,19 @@ def _render_findings(findings, currency):
     )
 
 
-def _document_head(title):
-    return (
-        "<!doctype html><html lang='en'><head>"
-        "<meta charset='utf-8'>"
-        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
-        f"<title>{_esc(title)}</title>"
-        "<style>"
-        "body{font-family:Segoe UI,Inter,Arial,sans-serif;margin:0;background:#f8fafc;color:#0f172a;}"
-        ".container{max-width:1400px;margin:0 auto;padding:32px;}"
-        ".header{margin-bottom:8px;}"
-        ".h1{font-size:30px;font-weight:800;margin:0 0 8px;}"
-        ".sub{color:#475569;margin:0;}"
-        ".group-title{font-size:22px;font-weight:800;margin:26px 0 6px;}"
-        ".grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:16px;margin:16px 0;}"
-        ".card{background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:18px;box-shadow:0 1px 2px rgba(0,0,0,.04);}"
-        ".card h3{margin:0 0 6px;font-size:13px;color:#64748b;font-weight:600;}"
-        ".card .num{font-size:26px;font-weight:800;}"
-        ".section{background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:20px;margin-top:16px;}"
-        ".section h2{margin:0 0 12px;font-size:19px;}"
-        ".chart-row{display:grid;grid-template-columns:280px 1fr 56px;gap:12px;align-items:center;margin:9px 0;}"
-        ".chart-row.money{grid-template-columns:280px 1fr 130px;}"
-        ".chart-name{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}"
-        ".chart-bar{background:#e2e8f0;border-radius:999px;height:18px;overflow:hidden;}"
-        ".chart-bar>div{height:100%;border-radius:999px;}"
-        ".chart-score{text-align:right;font-weight:700;font-size:13px;}"
-        ".controls{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:14px;}"
-        "label{font-size:14px;color:#334155;font-weight:600;}"
-        "select,input{border:1px solid #cbd5e1;border-radius:10px;padding:9px 12px;font-size:14px;background:#fff;min-width:220px;}"
-        "table{width:100%;border-collapse:collapse;font-size:14px;}"
-        "th,td{padding:11px 10px;border-top:1px solid #e2e8f0;vertical-align:top;text-align:left;}"
-        "th{background:#f8fafc;position:sticky;top:0;z-index:1;}"
-        ".pill{display:inline-block;border:1px solid;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:700;}"
-        ".bar-wrap{position:relative;min-width:110px;background:#e2e8f0;height:18px;border-radius:999px;overflow:hidden;}"
-        ".bar-fill{height:100%;border-radius:999px;}"
-        ".bar-label{position:absolute;right:8px;top:0;line-height:18px;font-size:12px;font-weight:700;color:#111827;}"
-        ".note{color:#475569;font-size:14px;line-height:1.5;}"
-        ".small{font-size:12px;color:#64748b;line-height:1.5;}"
-        ".code-box{background:#0f172a;color:#e2e8f0;border-radius:10px;padding:10px;font-family:ui-monospace,Consolas,Menlo,monospace;font-size:12px;line-height:1.45;white-space:pre-wrap;word-break:break-all;margin-top:8px;}"
-        ".copy-btn{margin-top:8px;border:1px solid #cbd5e1;background:#fff;border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;}"
-        ".copy-btn:hover{background:#f8fafc;}"
-        ".hidden{display:none;}"
-        ".summary-line{margin:8px 0 12px;color:#334155;font-size:14px;}"
-        ".sort-btn{background:none;border:0;font:inherit;font-weight:700;color:#334155;cursor:pointer;display:inline-flex;gap:4px;align-items:center;}"
-        ".indicator{color:#0f766e;}"
-        ".filter-input{min-width:260px;}"
-        "@media (max-width:1100px){.grid{grid-template-columns:repeat(2,minmax(0,1fr));}.chart-row,.chart-row.money{grid-template-columns:1fr;}}"
-        "@media print{.controls,.copy-btn,.filter-input,.indicator{display:none;}}"
-        "</style></head>"
-    )
+# FinOps specific styling on top of the shared Azure Portal theme. Uses the same
+# CSS variables so the report follows the light and dark palette.
+FINOPS_CSS = """
+.header{margin-bottom:8px}
+.section table{width:100%;border-collapse:collapse;font-size:13px}
+.section th,.section td{padding:10px;border-top:1px solid var(--border);vertical-align:top;text-align:left;color:var(--text)}
+.section th{background:var(--surface-2);font-weight:600;white-space:nowrap}
+.filter-input{min-width:260px}
+@media (max-width:900px){.chart-row,.chart-row.money{grid-template-columns:1fr}}
+"""
 
 
-SCRIPT = r"""<script>
+SCRIPT = r"""
 (function () {
   var subscriptionFilter = document.getElementById('subscriptionFilter');
   var bandFilter = document.getElementById('bandFilter');
@@ -392,7 +374,7 @@ SCRIPT = r"""<script>
     });
   }
 })();
-</script>"""
+"""
 
 
 def main(report_data: dict, report_title: str = "Azure FinOps Cost Optimization Report") -> dict:
@@ -424,8 +406,8 @@ def main(report_data: dict, report_title: str = "Azure FinOps Cost Optimization 
 
     header = (
         "<div class='header'>"
-        f"<p class='h1'>{_esc(report_title)}</p>"
-        f"<p class='sub'>Generated {generated}. Scope {_esc(data.get('generated_for', 'agent read scope'))}. "
+        f"<h1>{_esc(report_title)}</h1>"
+        f"<p class='subtitle'>Generated {generated}. Scope {_esc(data.get('generated_for', 'agent read scope'))}. "
         f"Window {int(data.get('window_days', 30) or 30)} days. Cost source {_esc(data.get('data_source', 'CostManagement'))}. "
         "Accessible subscriptions only.</p></div>"
     )
@@ -433,7 +415,7 @@ def main(report_data: dict, report_title: str = "Azure FinOps Cost Optimization 
     summary_cards = (
         "<div class='grid'>"
         f"<div class='card'><h3>Analyzed spend (30 days)</h3><div class='num'>{_money(analyzed, currency)}</div></div>"
-        f"<div class='card'><h3>Est. monthly savings</h3><div class='num' style='color:#15803d'>{_money(savings, currency)}</div></div>"
+        f"<div class='card'><h3>Est. monthly savings</h3><div class='num' style='color:var(--conf-very-high)'>{_money(savings, currency)}</div></div>"
         f"<div class='card'><h3>Savings of spend</h3><div class='num'>{pct:.1f}%</div></div>"
         f"<div class='card'><h3>Termination candidates</h3><div class='num'>{len(candidates)}</div></div>"
         f"<div class='card'><h3>Recommendations</h3><div class='num'>{len(findings)}</div></div>"
@@ -488,13 +470,13 @@ def main(report_data: dict, report_title: str = "Azure FinOps Cost Optimization 
         parts.append(findings_html)
     parts.append(limitation)
 
-    document = (
-        _document_head(report_title)
-        + "<body><div class='container'>"
-        + "".join(parts)
-        + "</div>"
-        + SCRIPT
-        + "</body></html>"
+    document = document_shell(
+        report_title,
+        "".join(parts),
+        extra_css=FINOPS_CSS,
+        extra_js=SCRIPT,
+        include_table_js=False,
+        wrap_class="wrap wide",
     )
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)

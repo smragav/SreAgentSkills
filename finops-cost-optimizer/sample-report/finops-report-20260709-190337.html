@@ -1,0 +1,193 @@
+<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Azure FinOps Cost Optimization Report</title><style>
+:root{
+--bg:#faf9f8;--surface:#ffffff;--surface-2:#f3f2f1;--surface-3:#faf9f8;
+--text:#201f1e;--text-2:#605e5c;--text-3:#8a8886;
+--border:#edebe9;--border-2:#e1dfdd;
+--accent:#0078d4;--accent-hover:#106ebe;--accent-soft:#deecf9;
+--shadow:0 1.6px 3.6px rgba(0,0,0,.10),0 .3px .9px rgba(0,0,0,.07);
+--radius:6px;--radius-sm:4px;
+--sev-critical:#a4262c;--sev-high:#d13438;--sev-medium:#c77700;--sev-low:#605e5c;--sev-info:#0078d4;
+--conf-very-high:#107c10;--conf-high:#107c10;--conf-medium:#c77700;--conf-low:#a4262c;
+--code-bg:#f3f2f1;--code-text:#201f1e;--track:#c8c6c4;--track-on:#0078d4;
+color-scheme:light}
+html[data-theme='dark']{
+--bg:#1b1a19;--surface:#252423;--surface-2:#323130;--surface-3:#2b2a29;
+--text:#f3f2f1;--text-2:#c8c6c4;--text-3:#a19f9d;
+--border:#3b3a39;--border-2:#484644;
+--accent:#4db2ff;--accent-hover:#6cbcff;--accent-soft:#123047;
+--shadow:0 1.6px 3.6px rgba(0,0,0,.4),0 .3px .9px rgba(0,0,0,.3);
+--sev-critical:#f1707b;--sev-high:#f1707b;--sev-medium:#f0a35e;--sev-low:#c8c6c4;--sev-info:#4db2ff;
+--conf-very-high:#5bbf5b;--conf-high:#5bbf5b;--conf-medium:#f0a35e;--conf-low:#f1707b;
+--code-bg:#1e1e1e;--code-text:#f3f2f1;--track:#605e5c;--track-on:#4db2ff;
+color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 "Segoe UI","Segoe UI Web (West European)",-apple-system,BlinkMacSystemFont,Roboto,"Helvetica Neue",Arial,sans-serif}
+a{color:var(--accent)}
+.appbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:9px 20px;background:var(--surface);border-bottom:1px solid var(--border);box-shadow:var(--shadow)}
+.appbar-brand{display:flex;align-items:center;gap:10px;font-weight:600;font-size:14px;color:var(--text)}
+.appbar-logo{width:16px;height:16px;border-radius:3px;background:linear-gradient(135deg,var(--accent),#5c2d91)}
+.theme-switch{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border-2);background:var(--surface-2);color:var(--text-2);border-radius:999px;padding:5px 12px 5px 8px;cursor:pointer;font:inherit;font-size:12px}
+.theme-switch:hover{border-color:var(--accent)}
+.theme-switch__track{position:relative;width:34px;height:18px;border-radius:999px;background:var(--track);transition:background .15s;flex:none}
+.theme-switch__thumb{position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:left .15s;box-shadow:0 1px 2px rgba(0,0,0,.4)}
+.theme-switch[aria-checked='true'] .theme-switch__track{background:var(--track-on)}
+.theme-switch[aria-checked='true'] .theme-switch__thumb{left:18px}
+.theme-switch__label{min-width:62px;text-align:left}
+.wrap{max-width:1120px;margin:0 auto;padding:24px 24px 64px}
+.wrap.wide{max-width:1360px}
+.wrap.doc{max-width:880px;margin-top:24px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:40px 40px 64px;box-shadow:var(--shadow)}
+h1{font-size:24px;font-weight:600;margin:0 0 4px;color:var(--text)}
+.subtitle{color:var(--text-2);margin:0 0 16px}
+.meta{display:flex;flex-wrap:wrap;gap:6px 20px;color:var(--text-2);font-size:12.5px;margin-bottom:24px}
+.meta b{color:var(--text);font-weight:600}
+.group-title{font-size:18px;font-weight:600;margin:26px 0 12px;color:var(--text)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin:0 0 24px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin:16px 0}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow)}
+.card-label{color:var(--text-2);font-size:11px;text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+.card-value{font-size:26px;font-weight:600;margin-top:6px;color:var(--text)}
+.card-sub{color:var(--text-2);font-size:12px;margin-top:2px}
+.card h3{margin:0 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-2);font-weight:600}
+.card .num{font-size:26px;font-weight:600;color:var(--text)}
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;margin-bottom:18px;box-shadow:var(--shadow)}
+.section{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-top:16px;box-shadow:var(--shadow)}
+.section h2{margin:0 0 12px;font-size:17px;font-weight:600;color:var(--text)}
+.chart-row{display:grid;grid-template-columns:200px 1fr 130px;align-items:center;gap:12px;margin:7px 0}
+.chart-name{color:var(--text-2);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chart-bar{background:var(--surface-2);border-radius:3px;height:14px;overflow:hidden}
+.chart-bar>div{height:100%;border-radius:3px}
+.chart-score{text-align:right;font-variant-numeric:tabular-nums;font-size:13px;color:var(--text)}
+.pill{display:inline-block;padding:2px 9px;border-radius:10px;border:1px solid;font-size:12px;font-weight:600;line-height:18px;white-space:nowrap}
+.pill.s-critical{color:var(--sev-critical);border-color:color-mix(in srgb,var(--sev-critical) 45%,transparent);background:color-mix(in srgb,var(--sev-critical) 12%,transparent)}
+.pill.s-high{color:var(--sev-high);border-color:color-mix(in srgb,var(--sev-high) 45%,transparent);background:color-mix(in srgb,var(--sev-high) 12%,transparent)}
+.pill.s-medium{color:var(--sev-medium);border-color:color-mix(in srgb,var(--sev-medium) 45%,transparent);background:color-mix(in srgb,var(--sev-medium) 12%,transparent)}
+.pill.s-low{color:var(--sev-low);border-color:color-mix(in srgb,var(--sev-low) 45%,transparent);background:color-mix(in srgb,var(--sev-low) 14%,transparent)}
+.pill.s-info{color:var(--sev-info);border-color:color-mix(in srgb,var(--sev-info) 45%,transparent);background:color-mix(in srgb,var(--sev-info) 12%,transparent)}
+.pill.c-vhigh{color:var(--conf-very-high);border-color:color-mix(in srgb,var(--conf-very-high) 45%,transparent);background:color-mix(in srgb,var(--conf-very-high) 12%,transparent)}
+.pill.c-high{color:var(--conf-high);border-color:color-mix(in srgb,var(--conf-high) 45%,transparent);background:color-mix(in srgb,var(--conf-high) 12%,transparent)}
+.pill.c-medium{color:var(--conf-medium);border-color:color-mix(in srgb,var(--conf-medium) 45%,transparent);background:color-mix(in srgb,var(--conf-medium) 12%,transparent)}
+.pill.c-low{color:var(--conf-low);border-color:color-mix(in srgb,var(--conf-low) 45%,transparent);background:color-mix(in srgb,var(--conf-low) 12%,transparent)}
+.controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 12px}
+.filter,select,input[type=search],input[type=text],.filter-input{padding:7px 10px;border:1px solid var(--border-2);border-radius:var(--radius-sm);font:inherit;font-size:13px;background:var(--surface);color:var(--text)}
+.filter{flex:1;min-width:200px}
+select:focus,input:focus,.filter:focus{outline:2px solid var(--accent);outline-offset:-1px}
+label{font-size:13px;color:var(--text-2);font-weight:600}
+.count,.summary-line{color:var(--text-2);font-size:12.5px}
+table.data{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;font-size:13px;box-shadow:var(--shadow)}
+table.data th{background:var(--surface-2);text-align:left;padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;user-select:none;white-space:nowrap;color:var(--text);font-weight:600}
+table.data td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:top;color:var(--text)}
+table.data tr:last-child td{border-bottom:none}
+table.data tbody tr:hover{background:var(--surface-2)}
+.cmd code,.code-box{display:block;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--code-text);background:var(--code-bg);border:1px solid var(--border);padding:6px 8px;border-radius:var(--radius-sm);word-break:break-all;white-space:pre-wrap}
+.copy,.copy-btn{margin-top:6px;font-size:11px;padding:4px 10px;border:1px solid var(--border-2);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);cursor:pointer}
+.copy:hover,.copy-btn:hover{border-color:var(--accent);color:var(--accent)}
+.bar-wrap{position:relative;min-width:110px;background:var(--surface-2);height:16px;border-radius:3px;overflow:hidden}
+.bar-fill{height:100%;border-radius:3px}
+.bar-label{position:absolute;right:8px;top:0;line-height:16px;font-size:11px;font-weight:600;color:var(--text)}
+.sort-btn{background:none;border:0;font:inherit;font-weight:600;color:var(--text);cursor:pointer;display:inline-flex;gap:4px;align-items:center}
+.indicator{color:var(--accent)}
+.note{color:var(--text-2);font-size:13px;line-height:1.5}
+.small{font-size:12px;color:var(--text-3);line-height:1.5}
+.hidden{display:none}
+.notes{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 28px;color:var(--text-2);box-shadow:var(--shadow)}
+.notes li{margin:4px 0}
+footer{margin-top:32px;color:var(--text-3);font-size:12px;text-align:center}
+@media print{.appbar,.controls,.copy,.copy-btn{display:none}}
+
+.header{margin-bottom:8px}
+.section table{width:100%;border-collapse:collapse;font-size:13px}
+.section th,.section td{padding:10px;border-top:1px solid var(--border);vertical-align:top;text-align:left;color:var(--text)}
+.section th{background:var(--surface-2);font-weight:600;white-space:nowrap}
+.filter-input{min-width:260px}
+@media (max-width:900px){.chart-row,.chart-row.money{grid-template-columns:1fr}}
+</style><script>(function(){try{var s=localStorage.getItem('sre-theme');if(s!=='dark'&&s!=='light'){s=(window.matchMedia&&window.matchMedia('(prefers-color-scheme:dark)').matches)?'dark':'light';}document.documentElement.setAttribute('data-theme',s);}catch(e){document.documentElement.setAttribute('data-theme','light');}})();</script></head><body><div class='appbar'><div class='appbar-brand'><span class='appbar-logo'></span>Azure SRE Agent</div><button id='themeToggle' class='theme-switch' type='button' role='switch' aria-checked='false' onclick='toggleTheme()' title='Toggle light or dark theme'><span class='theme-switch__track'><span class='theme-switch__thumb'></span></span><span class='theme-switch__label'>Light mode</span></button></div><div class='wrap wide'><div class='header'><h1>Azure FinOps Cost Optimization Report</h1><p class='subtitle'>Generated 2026-07-09 19:03 UTC. Scope Contoso platform subscriptions. Window 30 days. Cost source CostManagement. Accessible subscriptions only.</p></div><div class='grid'><div class='card'><h3>Analyzed spend (30 days)</h3><div class='num'>$184,200.55</div></div><div class='card'><h3>Est. monthly savings</h3><div class='num' style='color:var(--conf-very-high)'>$27,450.00</div></div><div class='card'><h3>Savings of spend</h3><div class='num'>14.9%</div></div><div class='card'><h3>Termination candidates</h3><div class='num'>5</div></div><div class='card'><h3>Recommendations</h3><div class='num'>5</div></div></div><div class='group-title'>FinOps overview</div><div class='section'><h2>Spend by subscription</h2><div class='chart-row money'><div class='chart-name'>prod-platform</div><div class='chart-bar'><div style='width:100.0%;background:var(--accent)'></div></div><div class='chart-score'>$98,200.10</div></div><div class='chart-row money'><div class='chart-name'>prod-data</div><div class='chart-bar'><div style='width:53.1%;background:var(--accent)'></div></div><div class='chart-score'>$52,100.20</div></div><div class='chart-row money'><div class='chart-name'>nonprod-sandbox</div><div class='chart-bar'><div style='width:21.8%;background:var(--accent)'></div></div><div class='chart-score'>$21,400.75</div></div><div class='chart-row money'><div class='chart-name'>shared-networking</div><div class='chart-bar'><div style='width:12.7%;background:var(--accent)'></div></div><div class='chart-score'>$12,499.50</div></div></div><div class='section'><h2>Spend by resource group</h2><div class='chart-row money'><div class='chart-name'>rg-aks-prod</div><div class='chart-bar'><div style='width:100.0%;background:var(--accent)'></div></div><div class='chart-score'>$41,200.00</div></div><div class='chart-row money'><div class='chart-name'>rg-sql-prod</div><div class='chart-bar'><div style='width:79.6%;background:var(--accent)'></div></div><div class='chart-score'>$32,800.00</div></div><div class='chart-row money'><div class='chart-name'>rg-storage-archive</div><div class='chart-bar'><div style='width:45.9%;background:var(--accent)'></div></div><div class='chart-score'>$18,900.00</div></div><div class='chart-row money'><div class='chart-name'>rg-vmss-web</div><div class='chart-bar'><div style='width:37.4%;background:var(--accent)'></div></div><div class='chart-score'>$15,400.00</div></div></div><div class='section'><h2>Estimated monthly savings by dimension</h2><div class='chart-row money'><div class='chart-name'>Idle resources</div><div class='chart-bar'><div style='width:100.0%;background:var(--accent)'></div></div><div class='chart-score'>$9,800.00</div></div><div class='chart-row money'><div class='chart-name'>Commitment coverage</div><div class='chart-bar'><div style='width:73.5%;background:var(--accent)'></div></div><div class='chart-score'>$7,200.00</div></div><div class='chart-row money'><div class='chart-name'>Storage optimization</div><div class='chart-bar'><div style='width:42.9%;background:var(--accent)'></div></div><div class='chart-score'>$4,200.00</div></div><div class='chart-row money'><div class='chart-name'>Rightsizing</div><div class='chart-bar'><div style='width:36.7%;background:var(--accent)'></div></div><div class='chart-score'>$3,600.00</div></div><div class='chart-row money'><div class='chart-name'>Dev and test scheduling</div><div class='chart-bar'><div style='width:16.8%;background:var(--accent)'></div></div><div class='chart-score'>$1,650.00</div></div><div class='chart-row money'><div class='chart-name'>Log Analytics</div><div class='chart-bar'><div style='width:10.2%;background:var(--accent)'></div></div><div class='chart-score'>$1,000.00</div></div></div><div class='group-title'>Termination candidates</div><div class='grid'><div class='card'><h3>Total candidates</h3><div class='num'>5</div></div><div class='card'><h3>Est. monthly savings*</h3><div class='num' style='color:var(--conf-very-high)'>$1,073.60</div></div><div class='card'><h3>Very high confidence</h3><div class='num'>2</div></div><div class='card'><h3>High confidence</h3><div class='num'>1</div></div><div class='card'><h3>Medium or low confidence</h3><div class='num'>2</div></div></div><div class='small' style='margin:8px 0 0'>*Lower bound estimate. Deallocated VMs show direct compute savings as 0 because compute is already stopped; their attached disks and public IPs may still bill and appear as their own candidates where detected. Resources that could not be priced are marked Excluded and are not counted in the total.</div><div class='section'><h2>Top termination candidates</h2><div class='note'>This chart favours the clearest evidence: unattached disks, old snapshots, orphan NICs, and unassociated public IPs. Shared network, DR, and firewall looking resources are intentionally scored low.</div><div style='margin-top:16px'><div class='chart-row'><div class='chart-name'>disk-old-01</div><div class='chart-bar'><div style='width:100.0%;background:var(--conf-very-high)'></div></div><div class='chart-score'>96</div></div><div class='chart-row'><div class='chart-name'>pip-orphan-3</div><div class='chart-bar'><div style='width:95.8%;background:var(--conf-very-high)'></div></div><div class='chart-score'>92</div></div><div class='chart-row'><div class='chart-name'>snap-2024-06</div><div class='chart-bar'><div style='width:81.2%;background:var(--conf-high)'></div></div><div class='chart-score'>78</div></div><div class='chart-row'><div class='chart-name'>nic-leftover-9</div><div class='chart-bar'><div style='width:66.7%;background:var(--conf-medium)'></div></div><div class='chart-score'>64</div></div><div class='chart-row'><div class='chart-name'>fw-dr-standby</div><div class='chart-bar'><div style='width:22.9%;background:var(--conf-low)'></div></div><div class='chart-score'>22</div></div></div></div><div class='section'><h2>How to read the confidence score</h2><div class='note'>90 or above means the resource is unattached and old enough to look abandoned. 70 to 89 means likely safe but still worth a quick owner check. 50 to 69 means the signal is real but recent or ambiguous. Below 50 means it likely belongs to DR or shared infrastructure and should not be terminated without deeper validation.</div><div class='small' style='margin-top:10px'>Confidence is a conservative termination heuristic, not an automatic delete recommendation. The agent never runs these commands. Each delete command is for an operator to review and run.</div></div><div class='section'><h2>Filterable termination candidates</h2><div class='controls'><div><label for='subscriptionFilter'>Subscription</label><br><select id='subscriptionFilter'><option value='all'>All subscriptions</option><option value='prod-data'>prod-data</option><option value='prod-platform'>prod-platform</option><option value='shared-networking'>shared-networking</option></select></div><div><label for='bandFilter'>Confidence band</label><br><select id='bandFilter'><option value='all'>All bands</option><option value='Very high'>Very high</option><option value='High'>High</option><option value='Medium'>Medium</option><option value='Low'>Low</option></select></div><div><label for='searchBox'>Search</label><br><input id='searchBox' type='text' placeholder='resource, group, location, type'></div></div><div id='resultSummary' class='summary-line'>Showing 5 of 5 candidates</div><div style='overflow-x:auto'><table><thead><tr><th>Resource</th><th>Type</th><th>Subscription</th><th>Resource group</th><th>Location</th><th>Est. monthly savings</th><th>Confidence</th><th>Band</th><th>Why it looks unused</th><th>Recommended next step</th><th>Delete command</th></tr></thead><tbody id='candidateRows'><tr data-subscription='prod-platform' data-band='Very high' data-search='disk-old-01 managed disk prod-platform rg-vmss-web eastus unattached for 240 days'><td>disk-old-01</td><td>Managed disk</td><td>prod-platform</td><td>rg-vmss-web</td><td>eastus</td><td><strong>$128.00/mo</strong></td><td><div class='bar-wrap'><div class='bar-fill' style='width:96%;background:var(--conf-very-high)'></div><span class='bar-label'>96</span></div></td><td><span class='pill c-vhigh'>Very high</span></td><td>Unattached for 240 days</td><td>Confirm no snapshot dependency, then delete</td><td><div class='code-box' id='cmd-1'>az resource delete --ids &#x27;/subscriptions/x/resourceGroups/rg-vmss-web/providers/Microsoft.Compute/disks/disk-old-01&#x27;</div><button class='copy-btn' data-copy='cmd-1'>Copy</button></td></tr><tr data-subscription='shared-networking' data-band='Very high' data-search='pip-orphan-3 public ip shared-networking rg-net eastus not associated for 180 days'><td>pip-orphan-3</td><td>Public IP</td><td>shared-networking</td><td>rg-net</td><td>eastus</td><td><strong>$3.60/mo</strong></td><td><div class='bar-wrap'><div class='bar-fill' style='width:92%;background:var(--conf-very-high)'></div><span class='bar-label'>92</span></div></td><td><span class='pill c-vhigh'>Very high</span></td><td>Not associated for 180 days</td><td>Delete if not reserved for failover</td><td><div class='code-box' id='cmd-2'>az resource delete --ids &#x27;/subscriptions/x/resourceGroups/rg-net/providers/Microsoft.Network/publicIPAddresses/pip-orphan-3&#x27;</div><button class='copy-btn' data-copy='cmd-2'>Copy</button></td></tr><tr data-subscription='prod-data' data-band='High' data-search='snap-2024-06 snapshot prod-data rg-sql-prod eastus snapshot older than 1 year'><td>snap-2024-06</td><td>Snapshot</td><td>prod-data</td><td>rg-sql-prod</td><td>eastus</td><td><strong>$42.00/mo</strong></td><td><div class='bar-wrap'><div class='bar-fill' style='width:78%;background:var(--conf-high)'></div><span class='bar-label'>78</span></div></td><td><span class='pill c-high'>High</span></td><td>Snapshot older than 1 year</td><td>Verify retention policy, then delete</td><td><div class='code-box' id='cmd-3'>az resource delete --ids &#x27;/subscriptions/x/resourceGroups/rg-sql-prod/providers/Microsoft.Compute/snapshots/snap-2024-06&#x27;</div><button class='copy-btn' data-copy='cmd-3'>Copy</button></td></tr><tr data-subscription='prod-platform' data-band='Medium' data-search='nic-leftover-9 network interface prod-platform rg-vmss-web eastus no vm attached, recent creation'><td>nic-leftover-9</td><td>Network interface</td><td>prod-platform</td><td>rg-vmss-web</td><td>eastus</td><td><strong>$0.00/mo</strong></td><td><div class='bar-wrap'><div class='bar-fill' style='width:64%;background:var(--conf-medium)'></div><span class='bar-label'>64</span></div></td><td><span class='pill c-medium'>Medium</span></td><td>No VM attached, recent creation</td><td>Check with owner before delete</td><td><div class='code-box' id='cmd-4'>az resource delete --ids &#x27;/subscriptions/x/resourceGroups/rg-vmss-web/providers/Microsoft.Network/networkInterfaces/nic-leftover-9&#x27;</div><button class='copy-btn' data-copy='cmd-4'>Copy</button></td></tr><tr data-subscription='shared-networking' data-band='Low' data-search='fw-dr-standby firewall shared-networking rg-net westus idle metrics but dr naming'><td>fw-dr-standby</td><td>Firewall</td><td>shared-networking</td><td>rg-net</td><td>westus</td><td><strong>$900.00/mo</strong></td><td><div class='bar-wrap'><div class='bar-fill' style='width:22%;background:var(--conf-low)'></div><span class='bar-label'>22</span></div></td><td><span class='pill c-low'>Low</span></td><td>Idle metrics but DR naming</td><td>Do not delete without DR owner sign off</td><td><div class='code-box' id='cmd-5'>az resource delete --ids &#x27;/subscriptions/x/resourceGroups/rg-net/providers/Microsoft.Network/azureFirewalls/fw-dr-standby&#x27;</div><button class='copy-btn' data-copy='cmd-5'>Copy</button></td></tr></tbody></table></div></div><div class='section'><h2>Savings recommendations</h2><div class='note'>Rate, tier, retention, commitment, and scheduling changes ranked by priority. These are proposals for a human to review; the agent applies nothing.</div><div style='margin:12px 0'><input type='search' class='filter-input' placeholder='Filter rows...' oninput="filterTable('findingsTable',this.value)"></div><div style='overflow-x:auto'><table id='findingsTable'><thead><tr><th><button type='button' class='sort-btn' data-numeric='false' onclick="sortTable('findingsTable',0,this)">Resource<span class='indicator'></span></button></th><th><button type='button' class='sort-btn' data-numeric='false' onclick="sortTable('findingsTable',1,this)">Dimension<span class='indicator'></span></button></th><th><button type='button' class='sort-btn' data-numeric='false' onclick="sortTable('findingsTable',2,this)">Current<span class='indicator'></span></button></th><th><button type='button' class='sort-btn' data-numeric='false' onclick="sortTable('findingsTable',3,this)">Proposed<span class='indicator'></span></button></th><th><button type='button' class='sort-btn' data-numeric='true' onclick="sortTable('findingsTable',4,this)">Monthly saving<span class='indicator'></span></button></th><th><button type='button' class='sort-btn' data-numeric='false' onclick="sortTable('findingsTable',5,this)">Risk<span class='indicator'></span></button></th><th><button type='button' class='sort-btn' data-numeric='false' onclick="sortTable('findingsTable',6,this)">Priority<span class='indicator'></span></button></th></tr></thead><tbody><tr><td>vmss-web</td><td>Rightsizing</td><td>Standard_D8s_v5 x20</td><td>Standard_D4s_v5 x20</td><td>$3,600.00</td><td>Medium</td><td>High</td></tr><tr><td>subscription prod-platform</td><td>Commitment coverage</td><td>0% reserved</td><td>1yr savings plan for compute</td><td>$7,200.00</td><td>Low</td><td>High</td></tr><tr><td>starchive001</td><td>Storage optimization</td><td>Hot tier, GRS</td><td>Cool tier, GRS</td><td>$4,200.00</td><td>Low</td><td>Medium</td></tr><tr><td>rg-dev-*</td><td>Dev and test scheduling</td><td>Always on</td><td>Auto shutdown 19:00-07:00</td><td>$1,650.00</td><td>Low</td><td>Medium</td></tr><tr><td>law-central</td><td>Log Analytics</td><td>Pay as you go</td><td>Commitment tier 100 GB</td><td>$1,000.00</td><td>Low</td><td>Low</td></tr></tbody></table></div><p class='small' id='findingsTable-count'></p></div><div class='section'><h2>Method and limits</h2><div class='note'>Spend narrows where to look; savings and confidence decide what to act on first. Termination candidates are scored by a conservative confidence to terminate heuristic based on association state, age, and naming. Where Azure Monitor metrics or Activity Logs could not be read, the score relies on those heuristics only and the resource is treated more cautiously.</div><div class='small' style='margin-top:8px'>This report is read only. It proposes changes and provides operator ready delete commands, but the agent runs none of them.</div></div></div><script>
+function setTheme(t){var d=document.documentElement;d.setAttribute('data-theme',t);try{localStorage.setItem('sre-theme',t);}catch(e){}
+var b=document.getElementById('themeToggle');if(b){b.setAttribute('aria-checked',t==='dark'?'true':'false');var l=b.querySelector('.theme-switch__label');if(l){l.textContent=t==='dark'?'Dark mode':'Light mode';}}}
+function toggleTheme(){var cur=document.documentElement.getAttribute('data-theme')==='dark'?'dark':'light';setTheme(cur==='dark'?'light':'dark');}
+(function(){setTheme(document.documentElement.getAttribute('data-theme')==='dark'?'dark':'light');})();
+
+(function () {
+  var subscriptionFilter = document.getElementById('subscriptionFilter');
+  var bandFilter = document.getElementById('bandFilter');
+  var searchBox = document.getElementById('searchBox');
+  var resultSummary = document.getElementById('resultSummary');
+  var body = document.getElementById('candidateRows');
+  if (body) {
+    var rows = Array.prototype.slice.call(body.rows);
+    var apply = function () {
+      var sub = subscriptionFilter ? subscriptionFilter.value : 'all';
+      var band = bandFilter ? bandFilter.value : 'all';
+      var q = searchBox ? searchBox.value.trim().toLowerCase() : '';
+      var visible = 0;
+      rows.forEach(function (row) {
+        var okSub = sub === 'all' || row.getAttribute('data-subscription') === sub;
+        var okBand = band === 'all' || row.getAttribute('data-band') === band;
+        var okSearch = !q || (row.getAttribute('data-search') || '').indexOf(q) !== -1;
+        var show = okSub && okBand && okSearch;
+        row.classList.toggle('hidden', !show);
+        if (show) visible += 1;
+      });
+      if (resultSummary) resultSummary.textContent = 'Showing ' + visible + ' of ' + rows.length + ' candidates';
+    };
+    if (subscriptionFilter) subscriptionFilter.addEventListener('change', apply);
+    if (bandFilter) bandFilter.addEventListener('change', apply);
+    if (searchBox) searchBox.addEventListener('input', apply);
+    apply();
+  }
+
+  function filterTable(id, query) {
+    var table = document.getElementById(id);
+    if (!table) return;
+    var term = query.toLowerCase();
+    var trs = table.tBodies[0].rows;
+    var shown = 0;
+    for (var i = 0; i < trs.length; i++) {
+      var match = trs[i].textContent.toLowerCase().indexOf(term) !== -1;
+      trs[i].style.display = match ? '' : 'none';
+      if (match) shown++;
+    }
+    var counter = document.getElementById(id + '-count');
+    if (counter) counter.textContent = shown + ' of ' + trs.length + ' rows';
+  }
+  window.filterTable = filterTable;
+
+  function sortTable(id, col, btn) {
+    var table = document.getElementById(id);
+    if (!table) return;
+    var tbody = table.tBodies[0];
+    var trs = Array.prototype.slice.call(tbody.rows);
+    var asc = btn.getAttribute('data-asc') !== 'true';
+    btn.setAttribute('data-asc', asc ? 'true' : 'false');
+    var numeric = btn.getAttribute('data-numeric') === 'true';
+    trs.sort(function (a, b) {
+      var x = a.cells[col].textContent.trim();
+      var y = b.cells[col].textContent.trim();
+      if (numeric) {
+        var nx = parseFloat(x.replace(/[^0-9.\-]/g, '')) || 0;
+        var ny = parseFloat(y.replace(/[^0-9.\-]/g, '')) || 0;
+        return asc ? nx - ny : ny - nx;
+      }
+      return asc ? x.localeCompare(y) : y.localeCompare(x);
+    });
+    for (var j = 0; j < trs.length; j++) tbody.appendChild(trs[j]);
+  }
+  window.sortTable = sortTable;
+
+  var buttons = document.querySelectorAll('.copy-btn');
+  for (var b = 0; b < buttons.length; b++) {
+    buttons[b].addEventListener('click', function () {
+      var id = this.getAttribute('data-copy');
+      var node = document.getElementById(id);
+      if (!node) return;
+      var btn = this;
+      var original = btn.textContent;
+      var reset = function (label) { btn.textContent = label; setTimeout(function () { btn.textContent = original; }, 1200); };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(node.textContent).then(function () { reset('Copied'); }, function () { reset('Copy failed'); });
+      } else {
+        reset('Copied');
+      }
+    });
+  }
+})();
+</script></body></html>

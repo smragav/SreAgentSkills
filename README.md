@@ -1,40 +1,68 @@
-# Azure SRE Agent FinOps Cost Optimizer
+# Azure SRE Agent Extensions
 
-A FinOps cost optimization Skill and its Python tools for Azure SRE Agent. The agent ranks the subscriptions and resource groups it can read by spend, detects waste across seven dimensions, enumerates idle and orphaned resources and scores them by confidence to terminate, and produces a single self contained HTML report with copyable delete commands.
+A collection of skills for the Azure SRE Agent, grouped by reliability pillar. Each skill reviews the resources the agent can read, stays read only, ranks findings by severity or confidence, and produces a single self contained HTML report (inline CSS, CSS bar charts, no external assets). Most also ship an optional custom agent and an optional scheduled sweep.
 
-This repository holds the source. The running artifact lives inside the SRE Agent, authored in the Builder.
+This repository holds the source. The running artifacts live inside the SRE Agent, authored in the Builder or deployed as code with the shared data plane script.
 
-## What is here
+## Pillars and skills
 
-- finops-cost-optimizer/SKILL.md: the orchestration playbook.
-- finops-cost-optimizer/references/: supporting reference files the skill follows.
-- finops-cost-optimizer/tools/: the Python tools (cost_rank, commitment_recommendations, generate_report) plus a unit test for the ranking math.
-- finops-cost-optimizer/optional/: an optional custom agent and an optional monthly scheduled task.
-- finops-cost-optimizer/iac/: the deployment assets for this skill (data plane script, Bicep template, README). Each skill carries its own deployment folder.
+| Pillar | Skill | What it does |
+| --- | --- | --- |
+| [reliability-resilience](reliability-resilience) | [reliability-posture-review](reliability-resilience/reliability-posture-review) | Single points of failure and redundancy gaps, scored by severity. |
+| | [backup-recovery-coverage](reliability-resilience/backup-recovery-coverage) | Virtual machines with no backup protection, or stale or unhealthy backups. |
+| | [quota-limit-watch](reliability-resilience/quota-limit-watch) | Compute, network, and storage counters close to their quota. |
+| [observability](observability) | [observability-coverage-gap](observability/observability-coverage-gap) | Resources missing diagnostic settings, alerts, action groups, or a workspace. |
+| | [alert-hygiene-review](observability/alert-hygiene-review) | Noisy, cry wolf, unacknowledged, and disabled alert rules. |
+| [incident-response](incident-response) | [incident-triage-rca](incident-response/incident-triage-rca) | Gathers health, changes, and neighbours into a timeline for root cause. |
+| | [blameless-postmortem-writer](incident-response/blameless-postmortem-writer) | Turns incident facts into a blameless postmortem document. |
+| [governance](governance) | [certificate-secret-expiry](governance/certificate-secret-expiry) | Certificates, secrets, and credentials ranked by days to expiry. |
+| | [deprecation-retirement-tracker](governance/deprecation-retirement-tracker) | End of life runtimes, retired tiers, classic resources, old versions. |
+| | [tag-governance-compliance](governance/tag-governance-compliance) | Resources against a required tag standard, feeding chargeback. |
+| [workload-health](workload-health) | [aks-reliability-review](workload-health/aks-reliability-review) | AKS clusters against reliability and operational best practices. |
+| | [data-platform-review](workload-health/data-platform-review) | SQL, PostgreSQL, MySQL, and Cosmos DB redundancy and backup posture. |
+| | [appservice-containerapps-health](workload-health/appservice-containerapps-health) | App Service and Container Apps scaling, probes, and transport security. |
+| cost-optimization | [finops-cost-optimizer](finops-cost-optimizer) | Ranks spend, detects waste, scores idle resources to terminate. |
 
-## Design summary
+The cost optimizer predates the pillar layout and keeps its own top level folder and deployment script; treat it as the cost optimization pillar.
 
-- Output: a single self contained HTML report (inline CSS, CSS bar charts, no external assets, no CDN), delivered as a file link. It covers the FinOps overview, idle resource termination candidates with confidence scores and copyable delete commands, and savings recommendations. Issue creation is optional and off by default.
-- Permissions: starts on the agent's default Reader. It may ask the user to grant temporary access when a read is denied, but it never assigns roles itself. Coverage equals the agent's read scope.
-- Ranking: spend narrows scope (top decile with a floor for small tenants). Savings ranks the recommendations; confidence to terminate ranks the idle candidates.
-- Guardrails: read only. Recommendations and delete commands are proposals; a human reviews and runs any deletes. Run the trigger in Review mode.
+## How a skill is structured
 
-## How to author this into the SRE Agent Builder
+Every skill folder carries the same anatomy, following the cost optimizer that came first:
 
-1. Create the Python tools. In Builder, open the subagent builder and create three Python tools by pasting the code from finops-cost-optimizer/tools. On each tool, open the Identity tab and enable managed identity with the ARM scope.
-   - cost_rank from tools/cost_rank.py
-   - commitment_recommendations from tools/commitment_recommendations.py
-   - generate_report from tools/generate_report.py
-2. Create the skill. In Builder then Skills, create a skill named finops-cost-optimizer. Paste finops-cost-optimizer/SKILL.md into the editor, then upload the files under references/ as supporting files. Attach the tools RunAzCliReadCommands, cost_rank, commitment_recommendations, and generate_report.
-3. Test. In a new chat thread, ask the agent to run a cost optimization review. Confirm the skill loads, the cost numbers reconcile against the Azure Cost Management portal for one subscription, and the report link opens.
-4. Optional. Create the custom agent from optional/finops-cost-optimizer.agent.yaml and the scheduled task from optional/monthly-finops-sweep.md. Set the trigger to Review mode.
+- SKILL.md: the orchestration playbook, with YAML frontmatter (name, description, and the built in tools it attaches).
+- references/: the checks catalog, the scoring or report layout notes, and other supporting files the skill follows.
+- tools/: the Python tools. Each analyzer prints a report_data object as JSON, which pipes straight into the shared renderer. The heavy Azure imports are lazy so the pure logic is unit tested; each tool ships a test_*.py.
+- optional/: an optional custom agent (agent.yaml) and an optional scheduled sweep, or a task note for the incident skills.
 
-## Deploy with IaC (alternative)
+## Shared foundation
 
-Instead of the Builder, you can deploy the skill as code. The working path for most tenants is the data plane script finops-cost-optimizer/iac/deploy.ps1, which PUTs the skill (with the reference files and Python helpers bundled as additionalFiles) to the agent endpoint, the same surface the portal Builder uses. A Bicep control plane template is also included, but the control plane Agent Extensions API is restricted to internal Microsoft tenants in preview. See finops-cost-optimizer/iac/README.md.
+The [shared](shared) folder holds what every skill reuses, so the deploy client and the renderer are not copied thirteen times:
+
+- shared/tools/report_render.py: one generic self contained HTML report generator (summary cards, CSS bar charts, a sortable and filterable findings table, and an optional action candidates table with copy buttons).
+- shared/references/permissions-and-scope.md: the common Reader scope reference bundled into every skill.
+- shared/iac/deploy-skill.ps1: one parameterized data plane deploy script for any skill.
+
+## Deploy
+
+Point the shared script at a skill folder. It reads the name, description, and tools from that skill's SKILL.md frontmatter, bundles the skill's references and tools together with the shared references and shared tools, and PUTs the skill to the agent data plane, the same surface the Builder uses.
+
+```powershell
+cd shared/iac
+./deploy-skill.ps1 -SubscriptionId <sub> -ResourceGroup <rg> -AgentName <agent> `
+  -SkillPath ../../governance/certificate-secret-expiry -DryRun
+```
+
+Drop -DryRun to deploy. See [shared/iac/README.md](shared/iac/README.md) for details and the reason the data plane is used rather than the control plane. You can also author any skill by hand in the Builder by pasting SKILL.md, uploading the reference files, and creating the Python tools.
 
 ## Prerequisites
 
 - An Azure SRE Agent with Builder access.
-- The agent's managed identity has its default Reader on the subscriptions and resource groups you want analyzed.
-- For the optional issue creation, a connected GitHub or Azure DevOps repository.
+- The agent's managed identity has its default Reader on the subscriptions and resource groups you want analyzed. A few skills read data planes that need their own read role (Key Vault item metadata, Microsoft Graph for application credentials); each skill treats a denied read as not assessed rather than a failure.
+- Azure CLI with an active az login, and the SRE Agent Administrator role on the agent, to deploy as code.
+
+## Design principles
+
+- Read only throughout. Skills propose recommendations and provide operator ready commands, but a human reviews and runs anything that changes or deletes a resource.
+- Default Reader scope. Coverage equals the agent's read scope. A skill may ask the user to grant temporary access when a read is denied, but it never assigns roles itself.
+- Evidence first. Every finding carries its evidence and a severity or a confidence. Severity reflects blast radius and likelihood, not effort.
+- Self contained output. One HTML report per run, styled inline, that opens the same online or offline.
