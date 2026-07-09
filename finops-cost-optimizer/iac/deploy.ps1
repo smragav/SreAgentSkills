@@ -124,7 +124,7 @@ if ($Mode -eq 'Capture') {
 # Build the skill spec from local files (data plane schema).
 $skillContent = Get-Content -Path (Join-Path $skillRoot 'SKILL.md') -Raw
 $additionalFiles = Get-AdditionalFiles
-$description = 'FinOps cost optimization review across the subscriptions the agent can read. Ranks by spend, detects waste across seven dimensions, and produces an HTML report.'
+$description = 'FinOps cost optimization review across the subscriptions the agent can read. Ranks by spend, detects waste across seven dimensions, scores idle and orphaned resources by confidence to terminate, and produces a self contained HTML report.'
 $tools = @('RunAzCliReadCommands', 'RunInTerminal', 'SaveFileToBlob')
 $bodyJson = Build-SkillBody -Name $skillName -Description $description -Tools $tools -SkillContent $skillContent -AdditionalFiles $additionalFiles
 $uri = "$endpoint/api/v2/extendedAgent/skills/$skillName"

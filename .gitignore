@@ -1,0 +1,14 @@
+# Python bytecode and caches
+__pycache__/
+*.pyc
+*.pyo
+
+# Captured live SRE Agent configuration from deploy.ps1 -Mode Capture.
+# These dumps contain the agent data plane endpoint and full skill/tool content,
+# and can include subscription or resource identifiers. Keep them local.
+finops-cost-optimizer/iac/captured/
+
+# Generated and sample cost reports. These HTML files embed real Azure
+# subscription IDs, resource group names, and resource inventory. Do not publish
+# them to a public repository. Keep them local, or commit a sanitized copy only.
+sample-report/

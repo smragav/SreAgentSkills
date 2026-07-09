@@ -43,6 +43,21 @@ Bands:
 
 Sort findings by priority score, highest first.
 
+## Confidence to terminate: idle candidates
+
+Termination candidates use a second, simpler axis. Savings still matters, but the
+decision is whether the resource is safe to delete, so each candidate carries a
+confidence to terminate value from 0 to 100 rather than a priority score.
+
+- Very high, 90 or above: unattached and old enough to look abandoned.
+- High, 70 to 89: likely safe, still worth a quick owner check.
+- Medium, 50 to 69: the signal is real but recent or ambiguous.
+- Low, below 50: likely disaster recovery or shared infrastructure; do not terminate without deeper validation.
+
+The full scoring rubric, including the age and naming adjustments that lower the
+score for disaster recovery, shared network, and hybrid resources, is in
+references/idle-detection.md. Sort candidates by confidence, highest first.
+
 ## What cost_rank returns
 
 A JSON object with:

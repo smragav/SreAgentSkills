@@ -1,8 +1,10 @@
 # Checks catalog
 
-Seven cost optimization dimensions. For each finding record: resource id, dimension, current configuration, proposed change, estimated monthly saving, risk rating, and evidence. All commands are read only.
+Seven cost optimization dimensions. For each finding record: resource id, dimension, current configuration, proposed change, estimated monthly saving, risk rating, and evidence. All commands are read only and run within the agent's existing access. If a command returns access denied or authorization failed, the skill may ask the user to grant temporary access to that scope, but it never assigns roles itself. If the user declines, skip that check for that scope, record it as not assessed because of insufficient access, and move on.
 
 Use the azure-pricing approach (Azure retail prices) to estimate the cost of a target SKU, and the current cost from cost_rank, to compute saving = current minus target.
+
+Two of these dimensions, orphaned resources (2) and idle resources (4), also feed the termination candidates table. Enumerate those with Azure Resource Graph and score each one by confidence to terminate using references/idle-detection.md. The other dimensions produce savings recommendations.
 
 ## 1. Azure Advisor cost baseline
 
@@ -16,15 +18,16 @@ Risk: low. Evidence: the Advisor recommendation id and its reported saving.
 
 ## 2. Orphaned resources
 
-Resources that cost money with nothing attached.
+Resources that cost money with nothing attached. Enumerate these across every accessible subscription with Azure Resource Graph, not per subscription list calls, using the queries in references/idle-detection.md. Each one becomes a termination candidate with a confidence to terminate score and an operator ready delete command.
 
-- Unattached managed disks: az disk list --subscription <id> --query "[?managedBy==null && diskState=='Unattached']"
-- Unassociated public IPs: az network public-ip list --subscription <id> --query "[?ipConfiguration==null]"
-- Unattached network interfaces: az network nic list --subscription <id> --query "[?virtualMachine==null]"
-- Empty App Service plans: az appservice plan list --subscription <id> --query "[?numberOfSites==0]"
-- Idle public load balancers and gateways with no backend pool members.
+- Unattached managed disks.
+- Unassociated public IPs.
+- Orphan network interfaces.
+- Standalone snapshots, scored by age.
+- Empty App Service plans.
+- Public load balancers with no backend members (heuristic, scored low).
 
-Saving: the full cost of the orphaned resource. Risk: low to medium (confirm the resource is not a staged or standby resource). Evidence: the empty association field plus age.
+Saving: the full cost of the orphaned resource, priced as a lower bound per references/idle-detection.md. Risk: reflected in the confidence score, which is lowered for disaster recovery, shared network, and hybrid naming. Evidence: the empty association field plus age.
 
 ## 3. Commitment coverage
 
@@ -42,6 +45,7 @@ Resources that run but do little. Requires metrics.
 - Pull Azure Monitor metrics over a 30 day window: az monitor metrics list --resource <id> --metric "Percentage CPU" --interval PT1H --start-time <iso> --end-time <iso>
 - Flag a virtual machine as idle when average CPU is below 5 percent and network throughput is low across the window.
 - Apply the same idea to gateways and load balancers with negligible throughput.
+- Deallocated virtual machines found through Azure Resource Graph also become termination candidates; score and price them with references/idle-detection.md.
 
 Saving: deallocate, or resize to a smaller SKU priced with the azure-pricing approach. Risk: medium (confirm the workload is not scheduled or seasonal). Evidence: the metric averages and the window.
 

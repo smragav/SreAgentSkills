@@ -12,9 +12,9 @@ Create this in Scheduled tasks. It runs the FinOps review on a schedule and post
 Run a FinOps cost optimization review across the subscriptions this agent can read.
 
 1. Use the finops-cost-optimizer skill.
-2. Narrow scope by amortized spend over the last 30 days, then detect waste across the seven dimensions.
-3. Rank findings by estimated monthly savings.
-4. Produce the HTML report and post the file link with a short summary: total analyzed spend, total estimated monthly savings, findings by priority, and the top three recommendations.
-5. If a previous run exists in memory, add a short month over month note on how analyzed spend and estimated savings changed.
+2. Narrow scope by amortized spend over the last 30 days, then detect waste across the seven dimensions and enumerate idle and orphaned termination candidates with Azure Resource Graph.
+3. Rank findings by estimated monthly savings, and rank termination candidates by confidence to terminate.
+4. Produce the self contained HTML report and post the file link with a short summary: total analyzed spend, total estimated monthly savings, findings by priority, termination candidates by confidence band, and the top recommendations and candidates.
+5. If a previous run exists in memory, add a short month over month note on how analyzed spend, estimated savings, and the candidate count changed.
 
-Do not change or delete any resource. Propose recommendations only.
+Do not change or delete any resource. Propose recommendations and provide operator ready delete commands only.

@@ -1,6 +1,6 @@
 # Azure SRE Agent FinOps Cost Optimizer
 
-A FinOps cost optimization Skill and its Python tools for Azure SRE Agent. The agent ranks the subscriptions and resource groups it can read by spend, detects waste across seven dimensions, ranks recommendations by estimated savings, and produces a self contained HTML report.
+A FinOps cost optimization Skill and its Python tools for Azure SRE Agent. The agent ranks the subscriptions and resource groups it can read by spend, detects waste across seven dimensions, enumerates idle and orphaned resources and scores them by confidence to terminate, and produces a single self contained HTML report with copyable delete commands.
 
 This repository holds the source. The running artifact lives inside the SRE Agent, authored in the Builder.
 
@@ -14,10 +14,10 @@ This repository holds the source. The running artifact lives inside the SRE Agen
 
 ## Design summary
 
-- Output: a self contained HTML report (charts embedded, no external assets), delivered as a file link. Issue creation is optional and off by default.
-- Permissions: the agent's default Reader. No extra role grant. Coverage equals the agent's existing read scope.
-- Ranking: two phase. Spend narrows scope (top decile with a floor for small tenants). Savings ranks the final findings.
-- Guardrails: read only. Recommendations carry evidence, an estimated saving, and a risk rating. Run the trigger in Review mode.
+- Output: a single self contained HTML report (inline CSS, CSS bar charts, no external assets, no CDN), delivered as a file link. It covers the FinOps overview, idle resource termination candidates with confidence scores and copyable delete commands, and savings recommendations. Issue creation is optional and off by default.
+- Permissions: starts on the agent's default Reader. It may ask the user to grant temporary access when a read is denied, but it never assigns roles itself. Coverage equals the agent's read scope.
+- Ranking: spend narrows scope (top decile with a floor for small tenants). Savings ranks the recommendations; confidence to terminate ranks the idle candidates.
+- Guardrails: read only. Recommendations and delete commands are proposals; a human reviews and runs any deletes. Run the trigger in Review mode.
 
 ## How to author this into the SRE Agent Builder
 

@@ -79,7 +79,7 @@ resource reportTool 'Microsoft.App/agents/tools@2025-05-01-preview' = {
 
 var skillSpec = {
   name: 'finops-cost-optimizer' // CONFIRM
-  description: 'FinOps cost optimization review across the subscriptions the agent can read. Ranks by spend, detects waste across seven dimensions, and produces an HTML report.'
+  description: 'FinOps cost optimization review across the subscriptions the agent can read. Ranks by spend, detects waste across seven dimensions, scores idle and orphaned resources by confidence to terminate, and produces a self contained HTML report.'
   content: loadTextContent('../SKILL.md') // CONFIRM (SKILL.md body)
   tools: [ // CONFIRM
     'RunAzCliReadCommands'
@@ -95,6 +95,10 @@ var skillSpec = {
     {
       path: 'references/checks-catalog.md'
       content: loadTextContent('../references/checks-catalog.md')
+    }
+    {
+      path: 'references/idle-detection.md'
+      content: loadTextContent('../references/idle-detection.md')
     }
     {
       path: 'references/report-layout.md'
