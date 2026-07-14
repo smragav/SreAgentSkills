@@ -1,0 +1,116 @@
+<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Well-Architected Review</title><style>
+:root{
+--bg:#faf9f8;--surface:#ffffff;--surface-2:#f3f2f1;--surface-3:#faf9f8;
+--text:#201f1e;--text-2:#605e5c;--text-3:#8a8886;
+--border:#edebe9;--border-2:#e1dfdd;
+--accent:#0078d4;--accent-hover:#106ebe;--accent-soft:#deecf9;
+--shadow:0 1.6px 3.6px rgba(0,0,0,.10),0 .3px .9px rgba(0,0,0,.07);
+--radius:6px;--radius-sm:4px;
+--sev-critical:#a4262c;--sev-high:#d13438;--sev-medium:#c77700;--sev-low:#605e5c;--sev-info:#0078d4;
+--conf-very-high:#107c10;--conf-high:#107c10;--conf-medium:#c77700;--conf-low:#a4262c;
+--code-bg:#f3f2f1;--code-text:#201f1e;--track:#c8c6c4;--track-on:#0078d4;
+color-scheme:light}
+html[data-theme='dark']{
+--bg:#1b1a19;--surface:#252423;--surface-2:#323130;--surface-3:#2b2a29;
+--text:#f3f2f1;--text-2:#c8c6c4;--text-3:#a19f9d;
+--border:#3b3a39;--border-2:#484644;
+--accent:#4db2ff;--accent-hover:#6cbcff;--accent-soft:#123047;
+--shadow:0 1.6px 3.6px rgba(0,0,0,.4),0 .3px .9px rgba(0,0,0,.3);
+--sev-critical:#f1707b;--sev-high:#f1707b;--sev-medium:#f0a35e;--sev-low:#c8c6c4;--sev-info:#4db2ff;
+--conf-very-high:#5bbf5b;--conf-high:#5bbf5b;--conf-medium:#f0a35e;--conf-low:#f1707b;
+--code-bg:#1e1e1e;--code-text:#f3f2f1;--track:#605e5c;--track-on:#4db2ff;
+color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 "Segoe UI","Segoe UI Web (West European)",-apple-system,BlinkMacSystemFont,Roboto,"Helvetica Neue",Arial,sans-serif}
+a{color:var(--accent)}
+.appbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:9px 20px;background:var(--surface);border-bottom:1px solid var(--border);box-shadow:var(--shadow)}
+.appbar-brand{display:flex;align-items:center;gap:10px;font-weight:600;font-size:14px;color:var(--text)}
+.appbar-logo{width:16px;height:16px;border-radius:3px;background:linear-gradient(135deg,var(--accent),#5c2d91)}
+.theme-switch{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border-2);background:var(--surface-2);color:var(--text-2);border-radius:999px;padding:5px 12px 5px 8px;cursor:pointer;font:inherit;font-size:12px}
+.theme-switch:hover{border-color:var(--accent)}
+.theme-switch__track{position:relative;width:34px;height:18px;border-radius:999px;background:var(--track);transition:background .15s;flex:none}
+.theme-switch__thumb{position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:left .15s;box-shadow:0 1px 2px rgba(0,0,0,.4)}
+.theme-switch[aria-checked='true'] .theme-switch__track{background:var(--track-on)}
+.theme-switch[aria-checked='true'] .theme-switch__thumb{left:18px}
+.theme-switch__label{min-width:62px;text-align:left}
+.wrap{max-width:1120px;margin:0 auto;padding:24px 24px 64px}
+.wrap.wide{max-width:1360px}
+.wrap.doc{max-width:880px;margin-top:24px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:40px 40px 64px;box-shadow:var(--shadow)}
+h1{font-size:24px;font-weight:600;margin:0 0 4px;color:var(--text)}
+.subtitle{color:var(--text-2);margin:0 0 16px}
+.meta{display:flex;flex-wrap:wrap;gap:6px 20px;color:var(--text-2);font-size:12.5px;margin-bottom:24px}
+.meta b{color:var(--text);font-weight:600}
+.group-title{font-size:18px;font-weight:600;margin:26px 0 12px;color:var(--text)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin:0 0 24px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin:16px 0}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow)}
+.card-label{color:var(--text-2);font-size:11px;text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+.card-value{font-size:26px;font-weight:600;margin-top:6px;color:var(--text)}
+.card-sub{color:var(--text-2);font-size:12px;margin-top:2px}
+.card h3{margin:0 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-2);font-weight:600}
+.card .num{font-size:26px;font-weight:600;color:var(--text)}
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;margin-bottom:18px;box-shadow:var(--shadow)}
+.section{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-top:16px;box-shadow:var(--shadow)}
+.section h2{margin:0 0 12px;font-size:17px;font-weight:600;color:var(--text)}
+.chart-row{display:grid;grid-template-columns:200px 1fr 130px;align-items:center;gap:12px;margin:7px 0}
+.chart-name{color:var(--text-2);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chart-bar{background:var(--surface-2);border-radius:3px;height:14px;overflow:hidden}
+.chart-bar>div{height:100%;border-radius:3px}
+.chart-score{text-align:right;font-variant-numeric:tabular-nums;font-size:13px;color:var(--text)}
+.pill{display:inline-block;padding:2px 9px;border-radius:10px;border:1px solid;font-size:12px;font-weight:600;line-height:18px;white-space:nowrap}
+.pill.s-critical{color:var(--sev-critical);border-color:color-mix(in srgb,var(--sev-critical) 45%,transparent);background:color-mix(in srgb,var(--sev-critical) 12%,transparent)}
+.pill.s-high{color:var(--sev-high);border-color:color-mix(in srgb,var(--sev-high) 45%,transparent);background:color-mix(in srgb,var(--sev-high) 12%,transparent)}
+.pill.s-medium{color:var(--sev-medium);border-color:color-mix(in srgb,var(--sev-medium) 45%,transparent);background:color-mix(in srgb,var(--sev-medium) 12%,transparent)}
+.pill.s-low{color:var(--sev-low);border-color:color-mix(in srgb,var(--sev-low) 45%,transparent);background:color-mix(in srgb,var(--sev-low) 14%,transparent)}
+.pill.s-info{color:var(--sev-info);border-color:color-mix(in srgb,var(--sev-info) 45%,transparent);background:color-mix(in srgb,var(--sev-info) 12%,transparent)}
+.pill.c-vhigh{color:var(--conf-very-high);border-color:color-mix(in srgb,var(--conf-very-high) 45%,transparent);background:color-mix(in srgb,var(--conf-very-high) 12%,transparent)}
+.pill.c-high{color:var(--conf-high);border-color:color-mix(in srgb,var(--conf-high) 45%,transparent);background:color-mix(in srgb,var(--conf-high) 12%,transparent)}
+.pill.c-medium{color:var(--conf-medium);border-color:color-mix(in srgb,var(--conf-medium) 45%,transparent);background:color-mix(in srgb,var(--conf-medium) 12%,transparent)}
+.pill.c-low{color:var(--conf-low);border-color:color-mix(in srgb,var(--conf-low) 45%,transparent);background:color-mix(in srgb,var(--conf-low) 12%,transparent)}
+.controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 12px}
+.filter,select,input[type=search],input[type=text],.filter-input{padding:7px 10px;border:1px solid var(--border-2);border-radius:var(--radius-sm);font:inherit;font-size:13px;background:var(--surface);color:var(--text)}
+.filter{flex:1;min-width:200px}
+select:focus,input:focus,.filter:focus{outline:2px solid var(--accent);outline-offset:-1px}
+label{font-size:13px;color:var(--text-2);font-weight:600}
+.count,.summary-line{color:var(--text-2);font-size:12.5px}
+table.data{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;font-size:13px;box-shadow:var(--shadow)}
+table.data th{background:var(--surface-2);text-align:left;padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;user-select:none;white-space:nowrap;color:var(--text);font-weight:600}
+table.data td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:top;color:var(--text)}
+table.data tr:last-child td{border-bottom:none}
+table.data tbody tr:hover{background:var(--surface-2)}
+.cmd code,.code-box{display:block;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--code-text);background:var(--code-bg);border:1px solid var(--border);padding:6px 8px;border-radius:var(--radius-sm);word-break:break-all;white-space:pre-wrap}
+.copy,.copy-btn{margin-top:6px;font-size:11px;padding:4px 10px;border:1px solid var(--border-2);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);cursor:pointer}
+.copy:hover,.copy-btn:hover{border-color:var(--accent);color:var(--accent)}
+.bar-wrap{position:relative;min-width:110px;background:var(--surface-2);height:16px;border-radius:3px;overflow:hidden}
+.bar-fill{height:100%;border-radius:3px}
+.bar-label{position:absolute;right:8px;top:0;line-height:16px;font-size:11px;font-weight:600;color:var(--text)}
+.sort-btn{background:none;border:0;font:inherit;font-weight:600;color:var(--text);cursor:pointer;display:inline-flex;gap:4px;align-items:center}
+.indicator{color:var(--accent)}
+.note{color:var(--text-2);font-size:13px;line-height:1.5}
+.small{font-size:12px;color:var(--text-3);line-height:1.5}
+.hidden{display:none}
+.notes{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 28px;color:var(--text-2);box-shadow:var(--shadow)}
+.notes li{margin:4px 0}
+footer{margin-top:32px;color:var(--text-3);font-size:12px;text-align:center}
+@media print{.appbar,.controls,.copy,.copy-btn{display:none}}
+</style><script>(function(){try{var s=localStorage.getItem('sre-theme');if(s!=='dark'&&s!=='light'){s=(window.matchMedia&&window.matchMedia('(prefers-color-scheme:dark)').matches)?'dark':'light';}document.documentElement.setAttribute('data-theme',s);}catch(e){document.documentElement.setAttribute('data-theme','light');}})();</script></head><body><div class='appbar'><div class='appbar-brand'><span class='appbar-logo'></span>Azure SRE Agent</div><button id='themeToggle' class='theme-switch' type='button' role='switch' aria-checked='false' onclick='toggleTheme()' title='Toggle light or dark theme'><span class='theme-switch__track'><span class='theme-switch__thumb'></span></span><span class='theme-switch__label'>Light mode</span></button></div><div class='wrap'><h1>Well-Architected Review</h1><p class='subtitle'>Azure Well-Architected Framework scorecard across five pillars.</p><div class='meta'><span><b>Window:</b> Point in time</span><span><b>Scope:</b> 3 subscription(s)</span><span><b>Source:</b> Azure Resource Graph</span><span><b>Generated:</b> 2026-07-09 19:24 UTC</span></div><div class='cards'><div class='card'><div class='card-label'>Reliability</div><div class='card-value'>54</div><div class='card-sub'>Fair</div></div><div class='card'><div class='card-label'>Security</div><div class='card-value'>61</div><div class='card-sub'>Fair</div></div><div class='card'><div class='card-label'>Cost Optimization</div><div class='card-value'>80</div><div class='card-sub'>Good</div></div><div class='card'><div class='card-label'>Operational Excellence</div><div class='card-value'>52</div><div class='card-sub'>Fair</div></div><div class='card'><div class='card-label'>Performance Efficiency</div><div class='card-value'>49</div><div class='card-sub'>Poor</div></div></div><div class='group-title'>Overview</div><div class='panel'><div class='group-title'>Pillar scores</div><div class='chart-row'><div class='chart-name'>Reliability</div><div class='chart-bar'><div style='width:67.5%;background:var(--accent)'></div></div><div class='chart-score'>54 score</div></div><div class='chart-row'><div class='chart-name'>Security</div><div class='chart-bar'><div style='width:76.2%;background:var(--accent)'></div></div><div class='chart-score'>61 score</div></div><div class='chart-row'><div class='chart-name'>Cost Optimization</div><div class='chart-bar'><div style='width:100.0%;background:var(--accent)'></div></div><div class='chart-score'>80 score</div></div><div class='chart-row'><div class='chart-name'>Operational Excellence</div><div class='chart-bar'><div style='width:65.0%;background:var(--accent)'></div></div><div class='chart-score'>52 score</div></div><div class='chart-row'><div class='chart-name'>Performance Efficiency</div><div class='chart-bar'><div style='width:61.3%;background:var(--accent)'></div></div><div class='chart-score'>49 score</div></div></div><div class='panel'><div class='group-title'>Findings by severity</div><div class='chart-row'><div class='chart-name'>High</div><div class='chart-bar'><div style='width:37.5%;background:var(--sev-high)'></div></div><div class='chart-score'>3 checks</div></div><div class='chart-row'><div class='chart-name'>Medium</div><div class='chart-bar'><div style='width:100.0%;background:var(--sev-medium)'></div></div><div class='chart-score'>8 checks</div></div><div class='chart-row'><div class='chart-name'>Low</div><div class='chart-bar'><div style='width:25.0%;background:var(--sev-low)'></div></div><div class='chart-score'>2 checks</div></div></div><div class='group-title'>What pulled the scores down</div><div class='controls'><select id='findingsSev' onchange='filterFindings()'><option value=''>All severities</option><option value='High'>High</option><option value='Medium'>Medium</option><option value='Low'>Low</option></select><input class='filter' id='findingsText' onkeyup='filterFindings()' placeholder='Filter findings...'><span class='count' id='findings-count'></span></div><table id='findings' class='data'><thead><tr><th onclick='sortTable(this)'>Pillar</th><th onclick='sortTable(this)'>Check</th><th onclick='sortTable(this)'>Applicable</th><th onclick='sortTable(this)'>Failing</th><th onclick='sortTable(this)'>Pass Rate</th><th onclick='sortTable(this)'>Recommendation</th><th onclick='sortTable(this)'>Severity</th></tr></thead><tbody><tr data-band='High' style='border-left:3px solid var(--sev-high)'><td>Reliability</td><td>VMs without zone or availability set</td><td>40</td><td>18</td><td>55%</td><td>Deploy across availability zones or an availability set. Deep dive: reliability-posture-review.</td><td data-sort='1'><span class='pill s-high'>High</span></td></tr><tr data-band='High' style='border-left:3px solid var(--sev-high)'><td>Reliability</td><td>Premium SQL without zone redundancy</td><td>6</td><td>2</td><td>67%</td><td>Enable zoneRedundant on Premium and Business Critical databases.</td><td data-sort='1'><span class='pill s-high'>High</span></td></tr><tr data-band='High' style='border-left:3px solid var(--sev-high)'><td>Security</td><td>Storage with anonymous blob access</td><td>30</td><td>4</td><td>87%</td><td>Set allowBlobPublicAccess to false. Deep dive: network-exposure-review.</td><td data-sort='1'><span class='pill s-high'>High</span></td></tr><tr data-band='Medium' style='border-left:3px solid var(--sev-medium)'><td>Cost Optimization</td><td>Unattached managed disks</td><td>50</td><td>9</td><td>82%</td><td>Delete or snapshot unattached disks. Deep dive: finops-cost-optimizer.</td><td data-sort='2'><span class='pill s-medium'>Medium</span></td></tr><tr data-band='Medium' style='border-left:3px solid var(--sev-medium)'><td>Operational Excellence</td><td>Resources with no owner tag</td><td>400</td><td>220</td><td>45%</td><td>Apply an owner tag; enforce with Azure Policy. Deep dive: tag-governance-compliance.</td><td data-sort='2'><span class='pill s-medium'>Medium</span></td></tr><tr data-band='Medium' style='border-left:3px solid var(--sev-medium)'><td>Operational Excellence</td><td>AKS below the supported version floor</td><td>5</td><td>2</td><td>60%</td><td>Upgrade AKS to a supported version. Deep dive: deprecation-retirement-tracker.</td><td data-sort='2'><span class='pill s-medium'>Medium</span></td></tr><tr data-band='Medium' style='border-left:3px solid var(--sev-medium)'><td>Performance Efficiency</td><td>App Service plans on Free, Shared, or Basic</td><td>15</td><td>7</td><td>53%</td><td>Move production workloads to Standard or higher. Deep dive: appservice-containerapps-health.</td><td data-sort='2'><span class='pill s-medium'>Medium</span></td></tr><tr data-band='Medium' style='border-left:3px solid var(--sev-medium)'><td>Reliability</td><td>Locally redundant storage</td><td>30</td><td>12</td><td>60%</td><td>Use ZRS or GRS where the data warrants it.</td><td data-sort='2'><span class='pill s-medium'>Medium</span></td></tr><tr data-band='Medium' style='border-left:3px solid var(--sev-medium)'><td>Reliability</td><td>Single region Cosmos DB</td><td>4</td><td>3</td><td>25%</td><td>Add a second region and enable automatic failover.</td><td data-sort='2'><span class='pill s-medium'>Medium</span></td></tr><tr data-band='Medium' style='border-left:3px solid var(--sev-medium)'><td>Security</td><td>PaaS with public network access</td><td>20</td><td>11</td><td>45%</td><td>Disable public network access and use Private Link.</td><td data-sort='2'><span class='pill s-medium'>Medium</span></td></tr><tr data-band='Medium' style='border-left:3px solid var(--sev-medium)'><td>Security</td><td>Key Vaults without purge protection</td><td>8</td><td>5</td><td>38%</td><td>Enable purge protection on Key Vaults.</td><td data-sort='2'><span class='pill s-medium'>Medium</span></td></tr><tr data-band='Low' style='border-left:3px solid var(--sev-low)'><td>Cost Optimization</td><td>Unassociated public IPs</td><td>25</td><td>6</td><td>76%</td><td>Release public IPs with no association.</td><td data-sort='3'><span class='pill s-low'>Low</span></td></tr><tr data-band='Low' style='border-left:3px solid var(--sev-low)'><td>Performance Efficiency</td><td>Container Apps that cannot scale out</td><td>10</td><td>6</td><td>40%</td><td>Raise maxReplicas and set a scale rule.</td><td data-sort='3'><span class='pill s-low'>Low</span></td></tr></tbody></table><div class='group-title'>Method and limits</div><ul class='notes'><li>Score is the weighted pass ratio per pillar. Weights: Critical 4, High 3, Medium 2, Low 1.</li><li>Ratings: Excellent 90 and above, Good 75 to 89, Fair 50 to 74, Poor below 50.</li><li>This is a roll up; each check names the dedicated skill with the full detail.</li></ul><footer>Generated by an Azure SRE Agent skill. Read only. Recommendations and commands are proposals for a human to review and run.</footer></div><script>
+function setTheme(t){var d=document.documentElement;d.setAttribute('data-theme',t);try{localStorage.setItem('sre-theme',t);}catch(e){}
+var b=document.getElementById('themeToggle');if(b){b.setAttribute('aria-checked',t==='dark'?'true':'false');var l=b.querySelector('.theme-switch__label');if(l){l.textContent=t==='dark'?'Dark mode':'Light mode';}}}
+function toggleTheme(){var cur=document.documentElement.getAttribute('data-theme')==='dark'?'dark':'light';setTheme(cur==='dark'?'light':'dark');}
+(function(){setTheme(document.documentElement.getAttribute('data-theme')==='dark'?'dark':'light');})();
+
+function sortTable(th){var t=th.closest('table'),tb=t.tBodies[0],i=Array.prototype.indexOf.call(th.parentNode.children,th);
+var asc=!(th.dataset.asc==='1');th.dataset.asc=asc?'1':'0';
+var rows=Array.prototype.slice.call(tb.rows);
+rows.sort(function(a,b){var x=cell(a,i),y=cell(b,i);return asc?(x>y?1:x<y?-1:0):(x<y?1:x>y?-1:0)});
+rows.forEach(function(r){tb.appendChild(r)});}
+function cell(r,i){var c=r.cells[i];if(!c)return'';if(c.dataset.sort!==undefined)return parseFloat(c.dataset.sort)||0;var t=c.innerText.replace(/[$,%]/g,'').trim();var n=parseFloat(t);return isNaN(n)?c.innerText.toLowerCase():n;}
+function filterFindings(){var sev=(document.getElementById('findingsSev')||{}).value||'';var q=((document.getElementById('findingsText')||{}).value||'').toLowerCase();var el=document.getElementById('findings');if(!el)return;var tb=el.tBodies[0],shown=0;
+Array.prototype.forEach.call(tb.rows,function(r){var okS=!sev||r.getAttribute('data-band')===sev;var okQ=r.innerText.toLowerCase().indexOf(q)>-1;var show=okS&&okQ;r.style.display=show?'':'none';if(show)shown++;});
+var c=document.getElementById('findings-count');if(c)c.textContent=shown+' of '+tb.rows.length+' shown';}
+function filterCandidates(){var s=(document.getElementById('candSub')||{}).value||'',b=(document.getElementById('candBand')||{}).value||'',q=((document.getElementById('candText')||{}).value||'').toLowerCase(),el=document.getElementById('candidates');if(!el)return;var tb=el.tBodies[0],shown=0;
+Array.prototype.forEach.call(tb.rows,function(r){var ok=(!s||r.dataset.sub===s)&&(!b||r.dataset.band===b)&&r.innerText.toLowerCase().indexOf(q)>-1;r.style.display=ok?'':'none';if(ok)shown++;});
+var c=document.getElementById('cand-count');if(c)c.textContent=shown+' of '+tb.rows.length+' shown';}
+function copyCmd(btn){var c=btn.getAttribute('data-cmd');if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(c);}var o=btn.innerText;btn.innerText='Copied';setTimeout(function(){btn.innerText=o},1200);}
+(function(){filterFindings();filterCandidates();})();
+</script></body></html>

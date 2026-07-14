@@ -1,6 +1,6 @@
 # Azure SRE Agent Extensions
 
-A collection of skills for the Azure SRE Agent, grouped by reliability pillar. Each skill reviews the resources the agent can read, stays read only, ranks findings by severity or confidence, and produces a single self contained HTML report (inline CSS, CSS bar charts, no external assets). Most also ship an optional custom agent and an optional scheduled sweep.
+A collection of skills for the Azure SRE Agent, grouped by pillar, with a flagship Well-Architected review that scores all five pillars in one scorecard. Each skill reviews the resources the agent can read, stays read only, ranks findings by severity or confidence, and produces a single self contained HTML report (inline CSS, CSS bar charts, no external assets). Most also ship an optional custom agent, an optional scheduled sweep, and a rendered sample report.
 
 This repository holds the source. The running artifacts live inside the SRE Agent, authored in the Builder or deployed as code with the shared data plane script.
 
@@ -8,19 +8,24 @@ This repository holds the source. The running artifacts live inside the SRE Agen
 
 | Pillar | Skill | What it does |
 | --- | --- | --- |
+| [well-architected](well-architected) | [well-architected-review](well-architected/well-architected-review) | One scorecard scoring all five Well-Architected pillars; the front door to the suite. |
 | [reliability-resilience](reliability-resilience) | [reliability-posture-review](reliability-resilience/reliability-posture-review) | Single points of failure and redundancy gaps, scored by severity. |
-| | [backup-recovery-coverage](reliability-resilience/backup-recovery-coverage) | Virtual machines with no backup protection, or stale or unhealthy backups. |
 | | [quota-limit-watch](reliability-resilience/quota-limit-watch) | Compute, network, and storage counters close to their quota. |
 | [observability](observability) | [observability-coverage-gap](observability/observability-coverage-gap) | Resources missing diagnostic settings, alerts, action groups, or a workspace. |
 | | [alert-hygiene-review](observability/alert-hygiene-review) | Noisy, cry wolf, unacknowledged, and disabled alert rules. |
 | [incident-response](incident-response) | [incident-triage-rca](incident-response/incident-triage-rca) | Gathers health, changes, and neighbours into a timeline for root cause. |
 | | [blameless-postmortem-writer](incident-response/blameless-postmortem-writer) | Turns incident facts into a blameless postmortem document. |
+| | [recurring-incident-patterns](incident-response/recurring-incident-patterns) | Repeat offenders over time from alerts and resource health degradations. |
 | [governance](governance) | [certificate-secret-expiry](governance/certificate-secret-expiry) | Certificates, secrets, and credentials ranked by days to expiry. |
 | | [deprecation-retirement-tracker](governance/deprecation-retirement-tracker) | End of life runtimes, retired tiers, classic resources, old versions. |
 | | [tag-governance-compliance](governance/tag-governance-compliance) | Resources against a required tag standard, feeding chargeback. |
+| [security](security) | [network-exposure-review](security/network-exposure-review) | Internet facing attack surface: open ports, storage and PaaS public access. |
+| | [identity-access-hygiene](security/identity-access-hygiene) | Owner sprawl, overprivileged principals, classic admins, stale assignments. |
 | [workload-health](workload-health) | [aks-reliability-review](workload-health/aks-reliability-review) | AKS clusters against reliability and operational best practices. |
 | | [data-platform-review](workload-health/data-platform-review) | SQL, PostgreSQL, MySQL, and Cosmos DB redundancy and backup posture. |
 | | [appservice-containerapps-health](workload-health/appservice-containerapps-health) | App Service and Container Apps scaling, probes, and transport security. |
+| [operational-excellence](operational-excellence) | [change-audit](operational-excellence/change-audit) | What changed and whether it preceded a health degradation. |
+| | [pre-change-readiness](operational-excellence/pre-change-readiness) | Go / no-go readiness (reliability, exposure, capacity) for a target scope. |
 | cost-optimization | [finops-cost-optimizer](finops-cost-optimizer) | Ranks spend, detects waste, scores idle resources to terminate. |
 
 The cost optimizer predates the pillar layout and keeps its own top level folder and deployment script; treat it as the cost optimization pillar.
@@ -33,6 +38,7 @@ Every skill folder carries the same anatomy, following the cost optimizer that c
 - references/: the checks catalog, the scoring or report layout notes, and other supporting files the skill follows.
 - tools/: the Python tools. Each analyzer prints a report_data object as JSON, which pipes straight into the shared renderer. The heavy Azure imports are lazy so the pure logic is unit tested; each tool ships a test_*.py.
 - optional/: an optional custom agent (agent.yaml) and an optional scheduled sweep, or a task note for the incident skills.
+- sample-report/: a rendered HTML sample of the report the skill produces, so the output can be reviewed without running the skill.
 
 ## Shared foundation
 

@@ -4,7 +4,7 @@ Reliability signals detected with Azure Resource Graph, which reads across every
 
 For each finding the tool records: resource id, resource type, subscription, resource group, the signal that fired, a severity, and the recommended change. Severity reflects blast radius and likelihood, per references/scoring-method.md.
 
-If a query returns access denied for a scope, record it as not assessed and continue. Signals that Resource Graph cannot answer alone (backup protection, live idle metrics) are covered by the backup-recovery-coverage and cost skills, not here.
+If a query returns access denied for a scope, record it as not assessed and continue. Signals that Resource Graph cannot answer alone (backup protection, live idle metrics) are out of scope for this skill.
 
 ## 1. Compute with no zone or set redundancy (High)
 
@@ -92,6 +92,6 @@ Fix: add a second region and enable automatic failover for regional resilience.
 
 ## Beyond Resource Graph
 
-- Backup protection coverage: use the backup-recovery-coverage skill.
+- Backup protection coverage: check Azure Backup Center.
 - Live idle or underused resources: use the cost skill's idle detection.
 - Service level objective attainment: read Azure Resource Health history and Service Health for the affected resources when a finding needs corroboration.

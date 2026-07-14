@@ -166,7 +166,6 @@ def build_report_data(findings, subscription_names, subscriptions_scanned, notes
         },
         "method_notes": notes
         + [
-            "Backup protection coverage is assessed by the backup-recovery-coverage skill.",
             "Live idle and underused resources are assessed by the cost optimizer skill.",
             "Severity reflects blast radius and likelihood, not effort to fix.",
         ],
