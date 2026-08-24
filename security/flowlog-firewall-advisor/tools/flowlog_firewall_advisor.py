@@ -14,8 +14,10 @@ over its REST API because azure-monitor-query is not present in the agent runtim
 """
 
 import argparse
+import base64
 import ipaddress
 import json
+import os
 import sys
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -35,6 +37,9 @@ PLATFORM_NETWORKS = ("169.254.0.0/16", "127.0.0.0/8", "224.0.0.0/4")
 # acts on first.
 MANAGEMENT_PORTS = {22, 3389, 5985, 5986, 23, 512, 513, 514}
 DATABASE_PORTS = {1433, 3306, 5432, 1521, 27017, 6379, 9200, 5984, 11211}
+
+# Traffic Analytics flow types that are internal by definition.
+EAST_WEST_FLOW_TYPES = {"IntraVNet", "InterVNet", "UnknownPrivate", "Unknown Private"}
 
 # Row cap sent into the tuple query, and the threshold for calling a result truncated.
 TUPLE_QUERY_ROW_LIMIT = 200000
@@ -111,6 +116,19 @@ def is_private_address(address):
         return ipaddress.ip_address(address).is_private
     except ValueError:
         return False
+
+
+def flow_axis(row):
+    """Whether a flow stayed inside the network or crossed the boundary.
+
+    Traffic Analytics labels a large share of private to private traffic `Unknown`
+    rather than `IntraVNet`, so the addresses decide. Trusting the label alone ranks
+    internal traffic as public egress and emits a second, duplicate rule for a pair
+    already covered by an east west one.
+    """
+    if is_private_address(row.get("SrcIp")) and is_private_address(row.get("DestIp")):
+        return "EastWest"
+    return "EastWest" if row.get("FlowType") in EAST_WEST_FLOW_TYPES else "NorthSouth"
 
 
 def merge_port_ranges(ports):
@@ -237,7 +255,6 @@ def build_rules(tuples, min_flows=1, collapse_threshold=4):
     is host to subnet collapsing, which is reported separately.
     """
     denied_keys = build_denied_keys(tuples)
-    east_west_types = {"IntraVNet", "InterVNet", "UnknownPrivate", "Unknown Private"}
 
     candidates = []
     excluded = {"platform": 0, "denied": 0, "blocked_elsewhere": 0, "below_threshold": 0}
@@ -261,7 +278,7 @@ def build_rules(tuples, min_flows=1, collapse_threshold=4):
             continue
 
         tag = service_tag_for(row)
-        axis = "EastWest" if row.get("FlowType") in east_west_types else "NorthSouth"
+        axis = flow_axis(row)
         candidates.append({
             "axis": axis,
             "protocol": row.get("Protocol") or "TCP",
@@ -524,16 +541,41 @@ def _bicep_snippet(rule):
 # Azure access. Imported lazily so the logic above stays testable.
 # ---------------------------------------------------------------------------
 
-def _credential():
+def _credential(client_id=None):
+    """An agent can carry both a system assigned and a user assigned identity, and only
+    one of them holds the roles. Pin the client id so the choice is never implicit."""
     from azure.identity import DefaultAzureCredential
+
+    client_id = client_id or os.environ.get("AZURE_CLIENT_ID")
+    if client_id:
+        return DefaultAzureCredential(managed_identity_client_id=client_id)
     return DefaultAzureCredential()
 
 
-def discover_workspaces():
+def identity_report(client_id=None):
+    """Which principal each audience resolves to. Answers 'authorization failed' quickly."""
+    report = {"requested_client_id": client_id or os.environ.get("AZURE_CLIENT_ID") or "(none, implicit)"}
+    for label, scope in (("resource_manager", "https://management.azure.com/.default"),
+                         ("log_analytics", "https://api.loganalytics.io/.default")):
+        try:
+            token = _credential(client_id).get_token(scope).token
+            body = token.split(".")[1]
+            claims = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+            report[label] = {
+                "object_id": claims.get("oid", ""),
+                "app_id": claims.get("appid", ""),
+                "identity_resource": claims.get("xms_mirid", ""),
+            }
+        except Exception as error:
+            report[label] = {"error": str(error)[:300]}
+    return report
+
+
+def discover_workspaces(client_id=None):
     """Workspaces receiving VNet flow logs, grouped and ranked by enabled flow logs."""
     import requests
 
-    token = _credential().get_token("https://management.azure.com/.default").token
+    token = _credential(client_id).get_token("https://management.azure.com/.default").token
     response = requests.post(
         "https://management.azure.com/providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01",
         headers={"Authorization": "Bearer %s" % token, "Content-Type": "application/json"},
@@ -573,7 +615,7 @@ def _parse_utc(value):
     return datetime.fromisoformat(text).replace(tzinfo=timezone.utc)
 
 
-def query_workspace(workspace_id, query, start, end):
+def query_workspace(workspace_id, query, start, end, client_id=None):
     """Run a KQL query against a workspace over an explicit time range.
 
     Records truncation in TRUNCATION so the caller can report an incomplete result
@@ -583,7 +625,7 @@ def query_workspace(workspace_id, query, start, end):
     """
     import requests
 
-    token = _credential().get_token("https://api.loganalytics.io/.default").token
+    token = _credential(client_id).get_token("https://api.loganalytics.io/.default").token
     response = requests.post(
         "https://api.loganalytics.io/v1/workspaces/%s/query" % workspace_id,
         headers={"Authorization": "Bearer %s" % token, "Content-Type": "application/json"},
@@ -591,10 +633,13 @@ def query_workspace(workspace_id, query, start, end):
         timeout=300,
     )
     if response.status_code != 200:
-        raise RuntimeError(
-            "Log Analytics query failed for workspace %s: HTTP %s %s. A 403 means the agent "
-            "identity is missing Log Analytics Reader on the workspace."
-            % (workspace_id, response.status_code, response.text[:400]))
+        detail = ""
+        if response.status_code in (401, 403):
+            detail = (" Authenticated as %s, which needs Log Analytics Reader on the workspace. "
+                      "Run --whoami to see every identity available, and --client-id to pin one."
+                      % json.dumps(identity_report(client_id).get("log_analytics", {})))
+        raise RuntimeError("Log Analytics query failed for workspace %s: HTTP %s %s.%s"
+                           % (workspace_id, response.status_code, response.text[:400], detail))
 
     payload = response.json()
     if payload.get("error"):
@@ -626,10 +671,17 @@ def main(argv=None):
     parser.add_argument("--days", type=int, default=7, help="lookback window in days")
     parser.add_argument("--min-flows", type=int, default=1, help="ignore connections seen fewer times than this")
     parser.add_argument("--subscription", default="", help="subscription label for the report")
+    parser.add_argument("--client-id", default="", help="managed identity client id to authenticate as")
+    parser.add_argument("--whoami", action="store_true", help="print the identity each Azure audience resolves to")
     args = parser.parse_args(argv)
+    client_id = args.client_id or None
+
+    if args.whoami:
+        print(json.dumps(identity_report(client_id), indent=2))
+        return 0
 
     if args.discover:
-        print(json.dumps({"workspaces": discover_workspaces()}, indent=2))
+        print(json.dumps({"workspaces": discover_workspaces(client_id)}, indent=2))
         return 0
 
     if not args.workspace:
@@ -638,7 +690,7 @@ def main(argv=None):
     now = datetime.now(timezone.utc)
 
     if args.coverage:
-        rows = query_workspace(args.workspace, COVERAGE_QUERY, now - timedelta(days=400), now)
+        rows = query_workspace(args.workspace, COVERAGE_QUERY, now - timedelta(days=400), now, client_id)
         summary = rows[0] if rows else {}
         records = int(summary.get("Records") or 0)
         last_seen = summary.get("LastSeenUtc")
@@ -658,7 +710,7 @@ def main(argv=None):
     # Traffic Analytics ingests in batches, so every record in the newest batch shares a
     # TimeGenerated. Ending exactly at the last record drops that whole batch, because the
     # query interval excludes its upper bound. A minute of margin keeps the newest traffic.
-    tuples = query_workspace(args.workspace, TUPLE_QUERY, start, now + timedelta(minutes=1))
+    tuples = query_workspace(args.workspace, TUPLE_QUERY, start, now + timedelta(minutes=1), client_id)
 
     analysis = build_rules(tuples, min_flows=args.min_flows)
     report = build_report(analysis, {

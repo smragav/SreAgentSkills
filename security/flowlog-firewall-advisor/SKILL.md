@@ -51,6 +51,13 @@ The analyzer (`tools/flowlog_firewall_advisor.py`) and the shared renderer
 using the Python in the agent runtime. Both authenticate with the agent managed
 identity.
 
+An agent can carry both a system assigned and a user assigned identity, and usually
+only one of them holds the roles. If a read is refused, or discovery finds nothing
+where flow logs are known to exist, run
+`python tools/flowlog_firewall_advisor.py --whoami`. It prints the principal each
+audience resolves to. Re-run with `--client-id <clientId>` to pin the identity that
+carries Reader and Log Analytics Reader; every command below accepts it.
+
 ### Phase 1: Find the flow logs
 
 1. Run `python tools/flowlog_firewall_advisor.py --discover` with RunInTerminal. It

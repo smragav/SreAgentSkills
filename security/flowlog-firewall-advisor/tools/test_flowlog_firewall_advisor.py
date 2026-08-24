@@ -18,6 +18,7 @@ from flowlog_firewall_advisor import (
     classify,
     is_platform_address,
     is_private_address,
+    flow_axis,
     merge_port_ranges,
     port_expression_count,
     service_tag_for,
@@ -177,6 +178,28 @@ class TestSeverity(unittest.TestCase):
     def test_a_subnet_source_is_flagged_as_broader_than_observed(self):
         severity, _ = classify(["10.0.0.0/24"], ["10.0.1.1/32"], ["443"], False, "EastWest")
         self.assertEqual(severity, "Medium")
+
+
+class TestFlowAxis(unittest.TestCase):
+    """A real workspace labelled 854 of 1387 private to private flows `Unknown`, which
+    ranked internal traffic as public egress and duplicated every rule for the pair."""
+
+    def test_unknown_flow_type_between_private_addresses_is_east_west(self):
+        self.assertEqual(flow_axis(tuple_row("10.42.1.4", "10.42.2.4", 443, flow_type="Unknown")),
+                         "EastWest")
+
+    def test_a_public_destination_stays_on_the_boundary(self):
+        self.assertEqual(flow_axis(tuple_row("10.42.1.4", "13.107.246.53", 443, flow_type="Unknown")),
+                         "NorthSouth")
+
+    def test_the_label_still_decides_when_an_endpoint_is_public(self):
+        self.assertEqual(flow_axis(tuple_row("10.42.1.4", "13.107.246.53", 443, flow_type="InterVNet")),
+                         "EastWest")
+
+    def test_one_pair_yields_one_rule_whatever_the_label(self):
+        rows = [tuple_row("10.42.1.4", "10.42.2.4", 443, flow_type="IntraVNet"),
+                tuple_row("10.42.1.4", "10.42.2.4", 443, flow_type="Unknown")]
+        self.assertEqual(len(build_rules(rows)["rules"]), 1)
 
 
 class TestReportShape(unittest.TestCase):
