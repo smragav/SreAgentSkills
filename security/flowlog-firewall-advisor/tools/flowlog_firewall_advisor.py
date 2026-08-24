@@ -36,6 +36,14 @@ PLATFORM_NETWORKS = ("169.254.0.0/16", "127.0.0.0/8", "224.0.0.0/4")
 MANAGEMENT_PORTS = {22, 3389, 5985, 5986, 23, 512, 513, 514}
 DATABASE_PORTS = {1433, 3306, 5432, 1521, 27017, 6379, 9200, 5984, 11211}
 
+# Row cap sent into the tuple query, and the threshold for calling a result truncated.
+TUPLE_QUERY_ROW_LIMIT = 200000
+
+# Populated by query_workspace when the service truncates a result or the cap is hit.
+# A rule set built from partial data looks exactly like one built from complete data,
+# so the difference has to be carried into the report rather than inferred.
+TRUNCATION = []
+
 ARG_FLOWLOG_QUERY = """
 resources
 | where type =~ 'microsoft.network/networkwatchers/flowlogs'
@@ -78,8 +86,8 @@ NTANetAnalytics
     AclRules = make_set(AclRule, 5)
     by SrcIp, DestIp, DestPort, Protocol, Direction, Status, FlowType, SrcVm, DestVm
 | order by Bytes desc
-| take 200000
-"""
+| take {row_limit}
+""".replace("{row_limit}", str(TUPLE_QUERY_ROW_LIMIT))
 
 
 # ---------------------------------------------------------------------------
@@ -462,6 +470,11 @@ def build_report(analysis, meta):
                         "limit of %s. Raise the minimum flow count or narrow the scope."
                         % (combinations, RULE_COMBINATION_LIMIT))
 
+    # First, ahead of everything else. An incomplete rule set presented as complete is
+    # the failure this whole tool exists to avoid.
+    for reason in reversed(TRUNCATION):
+        notes.insert(0, "Incomplete data. %s" % reason)
+
     return {
         "title": "Flow log firewall advisor",
         "subtitle": "Azure Firewall network rules derived from observed virtual network traffic",
@@ -561,7 +574,13 @@ def _parse_utc(value):
 
 
 def query_workspace(workspace_id, query, start, end):
-    """Run a KQL query against a workspace over an explicit time range."""
+    """Run a KQL query against a workspace over an explicit time range.
+
+    Records truncation in TRUNCATION so the caller can report an incomplete result
+    rather than presenting it as the whole picture. The service signals a truncated
+    result set with HTTP 200 and a populated error node, not with a failure status,
+    so a caller that only reads the tables silently loses rows.
+    """
     import requests
 
     token = _credential().get_token("https://api.loganalytics.io/.default").token
@@ -576,11 +595,27 @@ def query_workspace(workspace_id, query, start, end):
             "Log Analytics query failed for workspace %s: HTTP %s %s. A 403 means the agent "
             "identity is missing Log Analytics Reader on the workspace."
             % (workspace_id, response.status_code, response.text[:400]))
-    tables = response.json().get("tables") or []
+
+    payload = response.json()
+    if payload.get("error"):
+        TRUNCATION.append(
+            "The service returned a partial result: %s. Narrow the window with --days and "
+            "re-run, because the rules below are missing traffic."
+            % str(payload["error"].get("message") or payload["error"])[:300])
+
+    tables = payload.get("tables") or []
     if not tables:
         return []
     columns = [column["name"] for column in tables[0].get("columns") or []]
-    return [dict(zip(columns, row)) for row in tables[0].get("rows") or []]
+    rows = [dict(zip(columns, row)) for row in tables[0].get("rows") or []]
+
+    if len(rows) >= TUPLE_QUERY_ROW_LIMIT:
+        TRUNCATION.append(
+            "The result hit the %s row cap, so distinct connections beyond it were dropped. "
+            "Narrow the window with --days, or raise the minimum flow count."
+            % TUPLE_QUERY_ROW_LIMIT)
+
+    return rows
 
 
 def main(argv=None):

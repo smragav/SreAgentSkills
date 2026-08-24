@@ -10,6 +10,8 @@ import unittest
 
 from flowlog_firewall_advisor import (
     RULE_COMBINATION_LIMIT,
+    TRUNCATION,
+    _parse_utc,
     build_denied_keys,
     build_report,
     build_rules,
@@ -203,6 +205,39 @@ class TestReportShape(unittest.TestCase):
         report = build_report(analysis, {"window": "7 days", "scope": "test", "tuple_count": len(rows)})
         if analysis["combinations"] > RULE_COMBINATION_LIMIT:
             self.assertIn("above the documented Azure Firewall policy limit", report["method_notes"][0])
+
+
+class TestTimestampParsing(unittest.TestCase):
+    """Log Analytics returns seven fractional digits, which fromisoformat rejects
+    before Python 3.11. This crashed the coverage check against a real workspace."""
+
+    def test_seven_digit_fraction_parses(self):
+        parsed = _parse_utc("2026-08-24T11:22:11.7064525Z")
+        self.assertEqual(parsed.year, 2026)
+        self.assertEqual(parsed.microsecond, 706452)
+
+    def test_no_fraction_parses(self):
+        self.assertEqual(_parse_utc("2026-08-24T11:22:11Z").second, 11)
+
+    def test_result_is_timezone_aware(self):
+        self.assertIsNotNone(_parse_utc("2026-08-24T11:22:11.706Z").tzinfo)
+
+
+class TestTruncationReporting(unittest.TestCase):
+    """A rule set built from partial data looks identical to one built from complete
+    data, so truncation has to reach the report rather than be inferred."""
+
+    def tearDown(self):
+        del TRUNCATION[:]
+
+    def test_truncation_becomes_the_first_note(self):
+        TRUNCATION.append("the service returned a partial result")
+        report = build_report(build_rules([]), {"window": "7 days", "scope": "t", "tuple_count": 0})
+        self.assertTrue(report["method_notes"][0].startswith("Incomplete data."))
+
+    def test_no_truncation_leaves_notes_alone(self):
+        report = build_report(build_rules([]), {"window": "7 days", "scope": "t", "tuple_count": 0})
+        self.assertFalse(report["method_notes"][0].startswith("Incomplete data."))
 
 
 if __name__ == "__main__":
