@@ -1,0 +1,614 @@
+"""flowlog_firewall_advisor: derive Azure Firewall network rules from VNet flow logs.
+
+Azure SRE Agent Python tool. Reads VNet flow logs through Traffic Analytics,
+reconstructs the connections that actually occurred, ranks them by severity, and
+prints a report_data object as JSON for the shared renderer.
+
+Read only throughout. Nothing is created, changed or deleted.
+
+Azure imports are lazy so the analysis logic below can be unit tested without any
+Azure dependency or credential. See test_flowlog_firewall_advisor.py.
+
+Standard library plus azure-identity, azure-monitor-query and requests at run time.
+"""
+
+import argparse
+import ipaddress
+import json
+import sys
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
+
+# Documented Azure Firewall policy limit. Unique source and destination combinations
+# in network rules is (sources) * (destinations) * (protocols) * (ports), summed over
+# every network rule in the policy.
+# https://learn.microsoft.com/azure/azure-resource-manager/management/azure-subscription-service-limits
+RULE_COMBINATION_LIMIT = 20000
+
+# Delivered by the platform rather than routed through a firewall, so a rule for them
+# consumes the policy budget for no effect.
+PLATFORM_ADDRESSES = ("168.63.129.16",)
+PLATFORM_NETWORKS = ("169.254.0.0/16", "127.0.0.0/8", "224.0.0.0/4")
+
+# Reachable management ports across a trust boundary are the finding a security team
+# acts on first.
+MANAGEMENT_PORTS = {22, 3389, 5985, 5986, 23, 512, 513, 514}
+DATABASE_PORTS = {1433, 3306, 5432, 1521, 27017, 6379, 9200, 5984, 11211}
+
+ARG_FLOWLOG_QUERY = """
+resources
+| where type =~ 'microsoft.network/networkwatchers/flowlogs'
+| extend fa = properties.flowAnalyticsConfiguration.networkWatcherFlowAnalyticsConfiguration
+| extend targetResourceId = tostring(properties.targetResourceId)
+| where targetResourceId has '/virtualNetworks/'
+| project
+    flowLogId = id,
+    flowLogEnabled = tobool(properties.enabled),
+    targetResourceId,
+    trafficAnalyticsEnabled = tobool(fa.enabled),
+    workspaceResourceId = tostring(fa.workspaceResourceId),
+    workspaceCustomerId = tostring(fa.workspaceId),
+    subscriptionId
+"""
+
+COVERAGE_QUERY = """
+NTANetAnalytics
+| where SubType =~ 'FlowLog'
+| summarize Records = count(), FirstSeenUtc = min(TimeGenerated), LastSeenUtc = max(TimeGenerated)
+"""
+
+# SrcPorts is deliberately dropped: ephemeral client ports carry no policy meaning and
+# would explode cardinality. Only the destination port describes the service reached.
+TUPLE_QUERY = """
+NTANetAnalytics
+| where SubType =~ 'FlowLog'
+| where isnotempty(SrcIp) and isnotempty(DestIp)
+| extend
+    Protocol  = case(L4Protocol =~ 'T', 'TCP', L4Protocol =~ 'U', 'UDP', toupper(tostring(L4Protocol))),
+    Direction = case(FlowDirection =~ 'I', 'Inbound', FlowDirection =~ 'O', 'Outbound', tostring(FlowDirection)),
+    Status    = case(FlowStatus =~ 'A', 'Allowed', FlowStatus =~ 'D', 'Denied', tostring(FlowStatus))
+| summarize
+    Flows = sum(coalesce(AllowedInFlows, tolong(0)) + coalesce(AllowedOutFlows, tolong(0))
+              + coalesce(DeniedInFlows, tolong(0)) + coalesce(DeniedOutFlows, tolong(0))),
+    Bytes = sum(coalesce(BytesSrcToDest, tolong(0)) + coalesce(BytesDestToSrc, tolong(0))),
+    FirstSeenUtc = min(FlowStartTime),
+    LastSeenUtc = max(FlowEndTime),
+    DestTags = make_set(DestServiceTags, 5),
+    AclRules = make_set(AclRule, 5)
+    by SrcIp, DestIp, DestPort, Protocol, Direction, Status, FlowType, SrcVm, DestVm
+| order by Bytes desc
+| take 200000
+"""
+
+
+# ---------------------------------------------------------------------------
+# Pure analysis. No Azure dependency, unit tested.
+# ---------------------------------------------------------------------------
+
+def is_platform_address(address):
+    """True for addresses that must never become a firewall rule."""
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    if str(ip) in PLATFORM_ADDRESSES:
+        return True
+    return any(ip in ipaddress.ip_network(net) for net in PLATFORM_NETWORKS)
+
+
+def is_private_address(address):
+    """True for RFC 1918 and carrier grade NAT space."""
+    try:
+        return ipaddress.ip_address(address).is_private
+    except ValueError:
+        return False
+
+
+def merge_port_ranges(ports):
+    """Collapse a port list into the shortest set of Azure Firewall expressions."""
+    ordered = sorted({int(p) for p in ports if 0 <= int(p) <= 65535})
+    if not ordered:
+        return []
+    ranges, start, previous = [], ordered[0], ordered[0]
+    for port in ordered[1:]:
+        if port == previous + 1:
+            previous = port
+            continue
+        ranges.append(str(start) if start == previous else "%d-%d" % (start, previous))
+        start = previous = port
+    ranges.append(str(start) if start == previous else "%d-%d" % (start, previous))
+    return ranges
+
+
+def summarise_addresses(addresses, collapse_threshold=4):
+    """Collapse addresses into the shortest honest CIDR list.
+
+    Individual addresses stay as /32 until enough of them share a /24. Collapsing is
+    a genuine widening, so it is returned separately and never applied silently.
+    """
+    unique = sorted({a for a in addresses if a})
+    if not unique:
+        return [], []
+
+    by_network = defaultdict(list)
+    passthrough = []
+    for address in unique:
+        try:
+            network = str(ipaddress.ip_network(address + "/24", strict=False))
+            by_network[network].append(address)
+        except ValueError:
+            passthrough.append(address)
+
+    result, collapsed = [], []
+    for network, members in sorted(by_network.items()):
+        if len(members) >= collapse_threshold:
+            result.append(network)
+            collapsed.append({"network": network, "observed_hosts": sorted(members)})
+        else:
+            result.extend("%s/32" % m for m in sorted(members))
+    result.extend(passthrough)
+    return sorted(set(result)), collapsed
+
+
+def port_expression_count(expressions):
+    """Worst case port count, expanding ranges, for the policy budget calculation."""
+    total = 0
+    for expression in expressions:
+        if "-" in expression:
+            low, high = expression.split("-", 1)
+            total += int(high) - int(low) + 1
+        else:
+            total += 1
+    return total
+
+
+def build_denied_keys(tuples):
+    """Connection keys denied at any evaluation point.
+
+    Flow logs record a verdict per evaluation point, so one blocked connection appears
+    twice: allowed leaving the source, denied arriving at the destination. Taking the
+    allowed record at face value produces a rule permitting traffic the current policy
+    blocks, silently widening access at cutover. Anything denied anywhere is excluded
+    everywhere.
+    """
+    denied = set()
+    for row in tuples:
+        if row.get("Status") != "Allowed":
+            denied.add((row.get("SrcIp"), row.get("DestIp"), row.get("DestPort"), row.get("Protocol")))
+    return denied
+
+
+def service_tag_for(row):
+    """Resolved destination service tag, which is stable where an IP literal is not."""
+    for tag in row.get("DestTags") or []:
+        if tag and "|" in tag:
+            return tag.rsplit("|", 1)[-1]
+    return None
+
+
+def classify(sources, destinations, ports, dest_is_tag, axis):
+    """Severity and reason for a proposed rule. Blast radius, not effort."""
+    port_numbers = set()
+    for expression in ports:
+        if "-" in expression:
+            low, high = expression.split("-", 1)
+            port_numbers.update(range(int(low), min(int(high), int(low) + 4096) + 1))
+        else:
+            port_numbers.add(int(expression))
+
+    management = sorted(port_numbers & MANAGEMENT_PORTS)
+    database = sorted(port_numbers & DATABASE_PORTS)
+    wide_source = any(not s.endswith("/32") for s in sources)
+
+    if management and axis == "NorthSouth":
+        return "Critical", "Management ports %s reachable across the virtual network boundary" % (
+            ", ".join(str(p) for p in management))
+    if management:
+        return "Critical", "Management ports %s reachable between subnets" % (
+            ", ".join(str(p) for p in management))
+    if len(port_numbers) > 64:
+        return "Critical", "%d ports in one rule, which is close to any to any" % len(port_numbers)
+    if axis == "NorthSouth" and not dest_is_tag:
+        return "High", "Egress to public addresses with no service tag, so the rule pins IP literals that change"
+    if database and axis == "NorthSouth":
+        return "High", "Database ports %s crossing the virtual network boundary" % (
+            ", ".join(str(p) for p in database))
+    if wide_source:
+        return "Medium", "Source is a subnet rather than specific hosts, so the rule is broader than what was seen"
+    if len(destinations) > 8:
+        return "Medium", "One source reaching %d destinations" % len(destinations)
+    return "Low", "Service traffic between known endpoints"
+
+
+def build_rules(tuples, min_flows=1, collapse_threshold=4):
+    """Consolidate observed connections into proposed rules.
+
+    Merging is lossless. Rules combine only on an exact signature match, so every
+    source, destination and port combination in a rule was observed. The one widening
+    is host to subnet collapsing, which is reported separately.
+    """
+    denied_keys = build_denied_keys(tuples)
+    east_west_types = {"IntraVNet", "InterVNet", "UnknownPrivate", "Unknown Private"}
+
+    candidates = []
+    excluded = {"platform": 0, "denied": 0, "blocked_elsewhere": 0, "below_threshold": 0}
+    denied_rows, blocked_rows = [], []
+
+    for row in tuples:
+        source, destination = row.get("SrcIp"), row.get("DestIp")
+        if is_platform_address(source) or is_platform_address(destination):
+            excluded["platform"] += 1
+            continue
+        if row.get("Status") != "Allowed":
+            excluded["denied"] += 1
+            denied_rows.append(row)
+            continue
+        if (source, destination, row.get("DestPort"), row.get("Protocol")) in denied_keys:
+            excluded["blocked_elsewhere"] += 1
+            blocked_rows.append(row)
+            continue
+        if int(row.get("Flows") or 0) < min_flows:
+            excluded["below_threshold"] += 1
+            continue
+
+        tag = service_tag_for(row)
+        axis = "EastWest" if row.get("FlowType") in east_west_types else "NorthSouth"
+        candidates.append({
+            "axis": axis,
+            "protocol": row.get("Protocol") or "TCP",
+            "source": source,
+            "destination": tag or destination,
+            "dest_is_tag": tag is not None,
+            "port": int(row.get("DestPort") or 0),
+            "flows": int(row.get("Flows") or 0),
+            "bytes": int(row.get("Bytes") or 0),
+            "first_seen": row.get("FirstSeenUtc"),
+            "last_seen": row.get("LastSeenUtc"),
+        })
+
+    # Stage 1: pool ports for each axis, protocol, source and destination triple.
+    stage1 = defaultdict(lambda: {"ports": set(), "flows": 0, "bytes": 0, "first": None, "last": None})
+    for item in candidates:
+        key = (item["axis"], item["protocol"], item["source"], item["destination"], item["dest_is_tag"])
+        bucket = stage1[key]
+        bucket["ports"].add(item["port"])
+        bucket["flows"] += item["flows"]
+        bucket["bytes"] += item["bytes"]
+        for field, name in (("first_seen", "first"), ("last_seen", "last")):
+            value = item.get(field)
+            if value and (bucket[name] is None
+                          or (name == "first" and value < bucket[name])
+                          or (name == "last" and value > bucket[name])):
+                bucket[name] = value
+
+    # Stage 2: identical destination and port signature, so pool the sources. Every
+    # resulting source to destination pair was observed; no combination is invented.
+    stage2 = defaultdict(lambda: {"sources": set(), "flows": 0, "bytes": 0, "first": None, "last": None})
+    for (axis, protocol, source, destination, is_tag), bucket in stage1.items():
+        signature = (axis, protocol, destination, is_tag, tuple(sorted(bucket["ports"])))
+        merged = stage2[signature]
+        merged["sources"].add(source)
+        merged["flows"] += bucket["flows"]
+        merged["bytes"] += bucket["bytes"]
+        for name in ("first", "last"):
+            value = bucket[name]
+            if value and (merged[name] is None
+                          or (name == "first" and value < merged[name])
+                          or (name == "last" and value > merged[name])):
+                merged[name] = value
+
+    # Stage 3: identical source set and port signature, so pool the destinations.
+    stage3 = defaultdict(lambda: {"destinations": set(), "sources": set(), "flows": 0,
+                                  "bytes": 0, "first": None, "last": None})
+    for (axis, protocol, destination, is_tag, ports), merged in stage2.items():
+        signature = (axis, protocol, tuple(sorted(merged["sources"])), is_tag, ports)
+        final = stage3[signature]
+        final["destinations"].add(destination)
+        final["sources"] = set(merged["sources"])
+        final["flows"] += merged["flows"]
+        final["bytes"] += merged["bytes"]
+        for name in ("first", "last"):
+            value = merged[name]
+            if value and (final[name] is None
+                          or (name == "first" and value < final[name])
+                          or (name == "last" and value > final[name])):
+                final[name] = value
+
+    rules, collapsed_all, combinations = [], [], 0
+    counters = defaultdict(int)
+
+    for (axis, protocol, sources, is_tag, ports), final in sorted(
+            stage3.items(), key=lambda kv: kv[1]["bytes"], reverse=True):
+        source_list, source_collapsed = summarise_addresses(sources, collapse_threshold)
+        collapsed_all.extend(source_collapsed)
+
+        if is_tag:
+            destination_list = sorted(final["destinations"])
+        else:
+            destination_list, dest_collapsed = summarise_addresses(final["destinations"], collapse_threshold)
+            collapsed_all.extend(dest_collapsed)
+
+        port_expressions = merge_port_ranges(ports)
+        combinations += len(source_list) * len(destination_list) * port_expression_count(port_expressions)
+
+        counters[axis] += 1
+        severity, reason = classify(source_list, destination_list, port_expressions, is_tag, axis)
+        rules.append({
+            "name": "%s-%s-%03d" % ("ns" if axis == "NorthSouth" else "ew", protocol.lower(), counters[axis]),
+            "axis": axis,
+            "protocol": protocol,
+            "sources": source_list,
+            "destinations": destination_list,
+            "ports": port_expressions,
+            "destination_is_service_tag": is_tag,
+            "severity": severity,
+            "reason": reason,
+            "flows": final["flows"],
+            "bytes": final["bytes"],
+            "first_seen": final["first"],
+            "last_seen": final["last"],
+        })
+
+    # Fold duplicate widenings so the review list does not repeat itself.
+    unique_collapsed = {}
+    for entry in collapsed_all:
+        existing = unique_collapsed.setdefault(entry["network"], set())
+        existing.update(entry["observed_hosts"])
+    collapsed = [{"network": k, "observed_hosts": sorted(v)} for k, v in sorted(unique_collapsed.items())]
+
+    return {
+        "rules": rules,
+        "collapsed": collapsed,
+        "excluded": excluded,
+        "denied_rows": denied_rows,
+        "blocked_rows": blocked_rows,
+        "combinations": combinations,
+    }
+
+
+def human_bytes(value):
+    value = float(value or 0)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if value < 1024 or unit == "TB":
+            return "%.1f %s" % (value, unit) if unit != "B" else "%d B" % value
+        value /= 1024
+    return "%.1f TB" % value
+
+
+def build_report(analysis, meta):
+    """Shape the analysis into the report_data object the shared renderer expects."""
+    rules = analysis["rules"]
+    excluded = analysis["excluded"]
+    combinations = analysis["combinations"]
+    budget_percent = (combinations / RULE_COMBINATION_LIMIT * 100.0) if RULE_COMBINATION_LIMIT else 0.0
+
+    severity_counts = defaultdict(int)
+    for rule in rules:
+        severity_counts[rule["severity"]] += 1
+
+    cards = [
+        {"label": "Proposed rules", "value": len(rules), "sub": "from %s connections" % meta.get("tuple_count", 0)},
+        {"label": "Critical and high", "value": severity_counts["Critical"] + severity_counts["High"],
+         "sub": "need review before deploying"},
+        {"label": "Policy budget", "value": "%.1f%%" % budget_percent,
+         "sub": "%s of %s combinations" % (combinations, RULE_COMBINATION_LIMIT)},
+        {"label": "Already blocked", "value": excluded["denied"] + excluded["blocked_elsewhere"],
+         "sub": "excluded from the rules"},
+    ]
+
+    by_axis = defaultdict(int)
+    for rule in rules:
+        by_axis[rule["axis"]] += rule["bytes"]
+    charts = [{
+        "title": "Volume by traffic direction",
+        "unit": "bytes",
+        "items": [{"name": "Crossing the VNet boundary" if axis == "NorthSouth" else "Inside the VNet",
+                   "value": total, "band": "High" if axis == "NorthSouth" else "Low"}
+                  for axis, total in sorted(by_axis.items(), key=lambda kv: kv[1], reverse=True)],
+    }]
+
+    rows = []
+    for rule in rules:
+        rows.append({
+            "rule": rule["name"],
+            "severity": rule["severity"],
+            "direction": "Boundary" if rule["axis"] == "NorthSouth" else "Internal",
+            "sources": _summarise_list(rule["sources"]),
+            "destinations": _summarise_list(rule["destinations"]),
+            "ports": ", ".join(rule["ports"]),
+            "volume": human_bytes(rule["bytes"]),
+            "last_seen": (rule["last_seen"] or "")[:19],
+            "why": rule["reason"],
+            "_band": rule["severity"],
+        })
+
+    candidates = []
+    for rule in rules:
+        candidates.append({
+            "resource": rule["name"],
+            "resource_type": "%s network rule" % rule["protocol"],
+            "subscription": meta.get("subscription", ""),
+            "resource_group": "",
+            "band": {"Critical": "Low", "High": "Medium", "Medium": "High", "Low": "Very high"}.get(
+                rule["severity"], "Medium"),
+            "confidence": rule["flows"],
+            "reason": "%s. Seen %s times, %s." % (rule["reason"], rule["flows"], human_bytes(rule["bytes"])),
+            "next_step": "Confirm this traffic is intended, then add it to the firewall policy",
+            "command": _bicep_snippet(rule),
+        })
+
+    notes = [
+        "Window analysed: %s. Traffic that did not occur inside it is absent from these rules, "
+        "so anything running monthly will be missing from a shorter capture." % meta.get("window", "unknown"),
+        "Rules merge only on an exact match, so every source, destination and port combination "
+        "in a rule was observed. Host to subnet widening is listed separately.",
+        "%s connection(s) were permitted at one point and denied at another, so they never completed. "
+        "They are excluded, because allowing them would widen the policy beyond what works today."
+        % excluded["blocked_elsewhere"],
+        "%s platform flow(s) excluded. The host endpoint, instance metadata, link local, loopback and "
+        "multicast are delivered by the platform and are not routed through a firewall."
+        % excluded["platform"],
+        "Network rules only. Application rules need fully qualified domain names, which IP flow logs "
+        "do not carry. Public destinations stay IP literals unless a service tag was resolved.",
+        "Deploy any derived rule set in a non enforcing mode alongside the current policy first.",
+    ]
+    if analysis["collapsed"]:
+        notes.insert(2, "%s address group(s) were widened from observed hosts to a /24 and now permit "
+                        "addresses never seen: %s." % (len(analysis["collapsed"]),
+                                                       ", ".join(c["network"] for c in analysis["collapsed"][:8])))
+    if combinations > RULE_COMBINATION_LIMIT:
+        notes.insert(0, "These rules need %s unique combinations, above the documented Azure Firewall policy "
+                        "limit of %s. Raise the minimum flow count or narrow the scope."
+                        % (combinations, RULE_COMBINATION_LIMIT))
+
+    return {
+        "title": "Flow log firewall advisor",
+        "subtitle": "Azure Firewall network rules derived from observed virtual network traffic",
+        "meta": {"window": meta.get("window", ""), "scope": meta.get("scope", ""),
+                 "source": "VNet flow logs via Traffic Analytics"},
+        "summary_cards": cards,
+        "charts": charts,
+        "findings": {
+            "title": "Proposed rules and why",
+            "columns": [
+                {"key": "rule", "label": "Rule"},
+                {"key": "severity", "label": "Severity"},
+                {"key": "direction", "label": "Direction"},
+                {"key": "sources", "label": "Sources"},
+                {"key": "destinations", "label": "Destinations"},
+                {"key": "ports", "label": "Ports"},
+                {"key": "volume", "label": "Volume"},
+                {"key": "last_seen", "label": "Last seen"},
+                {"key": "why", "label": "Why it is ranked here"},
+            ],
+            "rows": rows,
+        },
+        "candidates": candidates,
+        "method_notes": notes,
+    }
+
+
+def _summarise_list(values, limit=3):
+    values = list(values)
+    if len(values) <= limit:
+        return ", ".join(values)
+    return "%s and %d more" % (", ".join(values[:limit]), len(values) - limit)
+
+
+def _bicep_snippet(rule):
+    return (
+        "{ ruleType: 'NetworkRule' name: '%s' ipProtocols: ['%s'] "
+        "sourceAddresses: [%s] destinationAddresses: [%s] destinationPorts: [%s] }"
+        % (rule["name"], rule["protocol"],
+           " ".join("'%s'" % s for s in rule["sources"]),
+           " ".join("'%s'" % d for d in rule["destinations"]),
+           " ".join("'%s'" % p for p in rule["ports"]))
+    )
+
+
+# ---------------------------------------------------------------------------
+# Azure access. Imported lazily so the logic above stays testable.
+# ---------------------------------------------------------------------------
+
+def _credential():
+    from azure.identity import DefaultAzureCredential
+    return DefaultAzureCredential()
+
+
+def discover_workspaces():
+    """Workspaces receiving VNet flow logs, grouped and ranked by enabled flow logs."""
+    import requests
+
+    token = _credential().get_token("https://management.azure.com/.default").token
+    response = requests.post(
+        "https://management.azure.com/providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01",
+        headers={"Authorization": "Bearer %s" % token, "Content-Type": "application/json"},
+        json={"query": ARG_FLOWLOG_QUERY, "options": {"resultFormat": "objectArray"}},
+        timeout=120,
+    )
+    response.raise_for_status()
+
+    grouped = defaultdict(lambda: {"enabled": 0, "total": 0})
+    for row in response.json().get("data", []):
+        if not row.get("trafficAnalyticsEnabled") or not row.get("workspaceCustomerId"):
+            continue
+        entry = grouped[(row["workspaceCustomerId"], row.get("workspaceResourceId", ""))]
+        entry["total"] += 1
+        if row.get("flowLogEnabled"):
+            entry["enabled"] += 1
+
+    return sorted(
+        [{"workspace_customer_id": k[0], "workspace_resource_id": k[1], **v} for k, v in grouped.items()],
+        key=lambda w: (w["enabled"], w["total"]), reverse=True)
+
+
+def query_workspace(workspace_id, query, start, end):
+    """Run a KQL query against a workspace over an explicit time range."""
+    from azure.monitor.query import LogsQueryClient
+
+    client = LogsQueryClient(_credential())
+    result = client.query_workspace(workspace_id, query, timespan=(start, end))
+    tables = getattr(result, "tables", None) or []
+    if not tables:
+        return []
+    table = tables[0]
+    return [dict(zip(table.columns, row)) for row in table.rows]
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--discover", action="store_true", help="list workspaces receiving VNet flow logs")
+    parser.add_argument("--coverage", action="store_true", help="report what the workspace actually holds")
+    parser.add_argument("--workspace", help="Log Analytics workspace GUID")
+    parser.add_argument("--days", type=int, default=7, help="lookback window in days")
+    parser.add_argument("--min-flows", type=int, default=1, help="ignore connections seen fewer times than this")
+    parser.add_argument("--subscription", default="", help="subscription label for the report")
+    args = parser.parse_args(argv)
+
+    if args.discover:
+        print(json.dumps({"workspaces": discover_workspaces()}, indent=2))
+        return 0
+
+    if not args.workspace:
+        parser.error("--workspace is required unless --discover is used")
+
+    now = datetime.now(timezone.utc)
+
+    if args.coverage:
+        rows = query_workspace(args.workspace, COVERAGE_QUERY, now - timedelta(days=400), now)
+        summary = rows[0] if rows else {}
+        records = int(summary.get("Records") or 0)
+        last_seen = summary.get("LastSeenUtc")
+        stale_hours = None
+        if last_seen:
+            last = last_seen if isinstance(last_seen, datetime) else datetime.fromisoformat(str(last_seen))
+            stale_hours = round((now - last.replace(tzinfo=timezone.utc)).total_seconds() / 3600.0, 1)
+        print(json.dumps({
+            "records": records,
+            "first_seen": str(summary.get("FirstSeenUtc") or ""),
+            "last_seen": str(last_seen or ""),
+            "stale_hours": stale_hours,
+            "verdict": "Empty" if records == 0 else ("Stale" if (stale_hours or 0) > 3 else "Ok"),
+        }, indent=2))
+        return 0
+
+    start = now - timedelta(days=args.days)
+    # Traffic Analytics ingests in batches, so every record in the newest batch shares a
+    # TimeGenerated. Ending exactly at the last record drops that whole batch, because the
+    # query interval excludes its upper bound. A minute of margin keeps the newest traffic.
+    tuples = query_workspace(args.workspace, TUPLE_QUERY, start, now + timedelta(minutes=1))
+
+    analysis = build_rules(tuples, min_flows=args.min_flows)
+    report = build_report(analysis, {
+        "window": "%s to %s UTC (%s days)" % (start.strftime("%Y-%m-%d %H:%M"),
+                                              now.strftime("%Y-%m-%d %H:%M"), args.days),
+        "scope": "workspace %s" % args.workspace,
+        "subscription": args.subscription,
+        "tuple_count": len(tuples),
+    })
+    print(json.dumps(report))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

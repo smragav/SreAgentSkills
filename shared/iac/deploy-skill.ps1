@@ -93,6 +93,15 @@ function Get-AdditionalFiles {
             $files[$key] = (Get-Content -Path $file.FullName -Raw)
         }
     }
+    # Skill files that live at the skill root, for flat skills that mirror their
+    # upstream source layout (for example azure-arch/generator-template.py). The
+    # filePath is the bare file name, matching how the source bundles them. The
+    # SKILL.md is sent as skillContent, so it is not added here.
+    foreach ($file in Get-ChildItem -Path $skillRoot -File) {
+        if ($file.Name -eq 'SKILL.md') { continue }
+        if ($file.Extension -eq '.py' -and $file.Name -like 'test_*') { continue }
+        $files[$file.Name] = (Get-Content -Path $file.FullName -Raw)
+    }
     $list = @()
     foreach ($key in $files.Keys) { $list += @{ filePath = $key; content = $files[$key] } }
     return , $list

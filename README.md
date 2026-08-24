@@ -19,16 +19,21 @@ This repository holds the source. The running artifacts live inside the SRE Agen
 | [governance](governance) | [certificate-secret-expiry](governance/certificate-secret-expiry) | Certificates, secrets, and credentials ranked by days to expiry. |
 | | [deprecation-retirement-tracker](governance/deprecation-retirement-tracker) | End of life runtimes, retired tiers, classic resources, old versions. |
 | | [tag-governance-compliance](governance/tag-governance-compliance) | Resources against a required tag standard, feeding chargeback. |
+| | [sql-cmdb-inventory](governance/sql-cmdb-inventory) | SQL estate CMDB inventory across VM, Arc, Managed Instance, and Azure SQL, enriched with Defender counts. |
 | [security](security) | [network-exposure-review](security/network-exposure-review) | Internet facing attack surface: open ports, storage and PaaS public access. |
 | | [identity-access-hygiene](security/identity-access-hygiene) | Owner sprawl, overprivileged principals, classic admins, stale assignments. |
+| | [flowlog-firewall-advisor](security/flowlog-firewall-advisor) | What a virtual network actually talks to, as proposed Azure Firewall rules with evidence. |
 | [workload-health](workload-health) | [aks-reliability-review](workload-health/aks-reliability-review) | AKS clusters against reliability and operational best practices. |
 | | [data-platform-review](workload-health/data-platform-review) | SQL, PostgreSQL, MySQL, and Cosmos DB redundancy and backup posture. |
 | | [appservice-containerapps-health](workload-health/appservice-containerapps-health) | App Service and Container Apps scaling, probes, and transport security. |
 | [operational-excellence](operational-excellence) | [change-audit](operational-excellence/change-audit) | What changed and whether it preceded a health degradation. |
 | | [pre-change-readiness](operational-excellence/pre-change-readiness) | Go / no-go readiness (reliability, exposure, capacity) for a target scope. |
+| [architecture](architecture) | [azure-arch](architecture/azure-arch) | First pass Azure landing zone design and rough order cost estimate from a VM inventory. |
 | cost-optimization | [finops-cost-optimizer](finops-cost-optimizer) | Ranks spend, detects waste, scores idle resources to terminate. |
 
 The cost optimizer predates the pillar layout and keeps its own top level folder and deployment script; treat it as the cost optimization pillar.
+
+The architecture pillar's azure-arch skill is a design and migration generator rather than a read only posture review. It models a target Azure landing zone from a VM inventory and emits a draw.io diagram, an Excel cost workbook, a CSV, and JSON metadata, using the draw.io MCP connector instead of the shared HTML renderer. Both azure-arch and the governance sql-cmdb-inventory skill mirror their upstream source as flat folders (a SKILL.md, plus generator-template.py for azure-arch), so they skip the references, tools, optional, and sample-report subfolders the posture reviews use.
 
 ## How a skill is structured
 
