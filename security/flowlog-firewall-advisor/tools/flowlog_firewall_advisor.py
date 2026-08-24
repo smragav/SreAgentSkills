@@ -9,7 +9,8 @@ Read only throughout. Nothing is created, changed or deleted.
 Azure imports are lazy so the analysis logic below can be unit tested without any
 Azure dependency or credential. See test_flowlog_firewall_advisor.py.
 
-Standard library plus azure-identity, azure-monitor-query and requests at run time.
+Standard library plus azure-identity and requests at run time. Log Analytics is read
+over its REST API because azure-monitor-query is not present in the agent runtime.
 """
 
 import argparse
@@ -542,17 +543,44 @@ def discover_workspaces():
         key=lambda w: (w["enabled"], w["total"]), reverse=True)
 
 
+def _iso(moment):
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _parse_utc(value):
+    """Parse a Log Analytics timestamp, whose fractional second can carry 7 digits."""
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    text = str(value).strip()
+    if text[-1:] in ("Z", "z"):
+        text = text[:-1]
+    head, _, fraction = text.partition(".")
+    if fraction.isdigit():
+        text = "%s.%s" % (head, fraction[:6])
+    return datetime.fromisoformat(text).replace(tzinfo=timezone.utc)
+
+
 def query_workspace(workspace_id, query, start, end):
     """Run a KQL query against a workspace over an explicit time range."""
-    from azure.monitor.query import LogsQueryClient
+    import requests
 
-    client = LogsQueryClient(_credential())
-    result = client.query_workspace(workspace_id, query, timespan=(start, end))
-    tables = getattr(result, "tables", None) or []
+    token = _credential().get_token("https://api.loganalytics.io/.default").token
+    response = requests.post(
+        "https://api.loganalytics.io/v1/workspaces/%s/query" % workspace_id,
+        headers={"Authorization": "Bearer %s" % token, "Content-Type": "application/json"},
+        json={"query": query, "timespan": "%s/%s" % (_iso(start), _iso(end))},
+        timeout=300,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(
+            "Log Analytics query failed for workspace %s: HTTP %s %s. A 403 means the agent "
+            "identity is missing Log Analytics Reader on the workspace."
+            % (workspace_id, response.status_code, response.text[:400]))
+    tables = response.json().get("tables") or []
     if not tables:
         return []
-    table = tables[0]
-    return [dict(zip(table.columns, row)) for row in table.rows]
+    columns = [column["name"] for column in tables[0].get("columns") or []]
+    return [dict(zip(columns, row)) for row in tables[0].get("rows") or []]
 
 
 def main(argv=None):
@@ -581,8 +609,7 @@ def main(argv=None):
         last_seen = summary.get("LastSeenUtc")
         stale_hours = None
         if last_seen:
-            last = last_seen if isinstance(last_seen, datetime) else datetime.fromisoformat(str(last_seen))
-            stale_hours = round((now - last.replace(tzinfo=timezone.utc)).total_seconds() / 3600.0, 1)
+            stale_hours = round((now - _parse_utc(last_seen)).total_seconds() / 3600.0, 1)
         print(json.dumps({
             "records": records,
             "first_seen": str(summary.get("FirstSeenUtc") or ""),
