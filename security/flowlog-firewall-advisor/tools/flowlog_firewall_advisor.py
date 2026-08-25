@@ -552,9 +552,41 @@ def _credential(client_id=None):
     return DefaultAzureCredential()
 
 
+def resolve_agent_identity():
+    """Client id of the user assigned identity attached to this agent, if there is one.
+
+    The runtime resolves to the agent's system assigned identity, which commonly holds
+    no role assignments at all, so a read succeeds and returns almost nothing. The
+    token names the agent resource in `xms_mirid`, and that resource lists its own
+    identities, so the one carrying the roles can be found rather than configured.
+    Returns None outside the agent, where the ambient credential is already right.
+    """
+    import requests
+
+    try:
+        token = _credential().get_token("https://management.azure.com/.default").token
+        body = token.split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+        agent_resource = claims.get("xms_mirid") or ""
+        if "/agents/" not in agent_resource.lower():
+            return None
+        response = requests.get(
+            "https://management.azure.com%s?api-version=2025-05-01-preview" % agent_resource,
+            headers={"Authorization": "Bearer %s" % token}, timeout=60)
+        if response.status_code != 200:
+            return None
+        identities = (response.json().get("identity") or {}).get("userAssignedIdentities") or {}
+        for details in identities.values():
+            if details.get("clientId"):
+                return details["clientId"]
+    except Exception:
+        return None
+    return None
+
+
 def identity_report(client_id=None):
     """Which principal each audience resolves to. Answers 'authorization failed' quickly."""
-    report = {"requested_client_id": client_id or os.environ.get("AZURE_CLIENT_ID") or "(none, implicit)"}
+    report = {"client_id_in_use": client_id or os.environ.get("AZURE_CLIENT_ID") or "(none, implicit)"}
     for label, scope in (("resource_manager", "https://management.azure.com/.default"),
                          ("log_analytics", "https://api.loganalytics.io/.default")):
         try:
@@ -674,7 +706,7 @@ def main(argv=None):
     parser.add_argument("--client-id", default="", help="managed identity client id to authenticate as")
     parser.add_argument("--whoami", action="store_true", help="print the identity each Azure audience resolves to")
     args = parser.parse_args(argv)
-    client_id = args.client_id or None
+    client_id = args.client_id or os.environ.get("AZURE_CLIENT_ID") or resolve_agent_identity()
 
     if args.whoami:
         print(json.dumps(identity_report(client_id), indent=2))

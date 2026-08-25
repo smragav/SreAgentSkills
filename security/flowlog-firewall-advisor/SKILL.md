@@ -52,11 +52,11 @@ using the Python in the agent runtime. Both authenticate with the agent managed
 identity.
 
 An agent can carry both a system assigned and a user assigned identity, and usually
-only one of them holds the roles. If a read is refused, or discovery finds nothing
-where flow logs are known to exist, run
-`python tools/flowlog_firewall_advisor.py --whoami`. It prints the principal each
-audience resolves to. Re-run with `--client-id <clientId>` to pin the identity that
-carries Reader and Log Analytics Reader; every command below accepts it.
+only one of them holds the roles. The tool resolves this itself: it reads the agent
+resource named in its own token and authenticates as the user assigned identity
+attached to it. `--client-id <clientId>` overrides that, and
+`python tools/flowlog_firewall_advisor.py --whoami` prints the principal each
+audience resolves to when a read is refused or discovery comes back empty.
 
 ### Phase 1: Find the flow logs
 
@@ -64,7 +64,10 @@ carries Reader and Log Analytics Reader; every command below accepts it.
    queries Azure Resource Graph for Network Watcher flow log resources, keeps the
    ones targeting a virtual network with Traffic Analytics enabled, and groups them
    by the workspace they publish to.
-2. If nothing is found, stop and report it. Flow logs written only to a storage
+2. If nothing is found, do not conclude there are no flow logs yet. An identity that
+   can read nothing gets an empty Resource Graph result rather than an error, so run
+   `--whoami` first and confirm the identity is the one holding the roles. Only once
+   the identity is right, report the empty result. Flow logs written only to a storage
    account do not populate `NTANetAnalytics`. Say so plainly rather than reporting an
    empty result as a clean bill of health, and offer the two ways forward: enable
    Traffic Analytics, or point the skill at the storage account.
