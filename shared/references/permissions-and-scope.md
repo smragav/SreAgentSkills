@@ -28,7 +28,11 @@ Some data planes need their own read role rather than management plane Reader. K
 
 ## Identity setup for the Python tools
 
-The Python tools call Azure Resource Manager with the agent managed identity. Enable managed identity with the ARM scope on each tool in the Identity tab when you create it in the Builder. When the agent carries more than one managed identity, pin the capable one by setting AZURE_CLIENT_ID in the runtime so DefaultAzureCredential resolves it, rather than falling back to an under scoped identity.
+The Python tools call Azure Resource Manager with the agent managed identity. Enable managed identity with the ARM scope on each tool in the Identity tab when you create it in the Builder.
+
+An agent often carries a system assigned identity alongside the user assigned one, and the runtime resolves to the system assigned identity, which is commonly created with no role assignments at all. Resource Graph answers such a caller with HTTP 200 and a nearly empty result rather than an error, so a skill can report confidently on an estate it never saw. Measured on one agent: 15 resources visible where the user assigned identity saw 1140.
+
+`tools/agent_identity.py` removes that failure mode. It reads the agent resource named in its own token, finds the user assigned identity attached to it, and authenticates as that. Set AZURE_CLIENT_ID to override, and outside an agent the ambient credential is used unchanged.
 
 ## The rule every skill keeps
 

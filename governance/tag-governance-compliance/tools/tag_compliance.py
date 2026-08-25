@@ -116,9 +116,9 @@ def build_report_data(resources, required, subs_scanned, sub_names, notes):
 
 
 def _headers():
-    from azure.identity import DefaultAzureCredential
+    from agent_identity import agent_token
 
-    token = DefaultAzureCredential().get_token(f"{ARM_ENDPOINT}/.default").token
+    token = agent_token(f"{ARM_ENDPOINT}/.default")
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 

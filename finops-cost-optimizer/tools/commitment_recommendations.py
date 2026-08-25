@@ -13,10 +13,9 @@ ARM_ENDPOINT = "https://management.azure.com"
 
 
 def _token():
-    from azure.identity import DefaultAzureCredential
+    from agent_identity import agent_token
 
-    credential = DefaultAzureCredential()
-    return credential.get_token(f"{ARM_ENDPOINT}/.default").token
+    return agent_token(f"{ARM_ENDPOINT}/.default")
 
 
 def _get_all(headers, url):

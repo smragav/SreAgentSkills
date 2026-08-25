@@ -80,8 +80,8 @@ def classify_item(item, now, horizon):
     }
 
 
-def build_report_data(items, horizon, subs_scanned, notes):
-    now = datetime.now(timezone.utc)
+def build_report_data(items, horizon, subs_scanned, notes, now=None):
+    now = now or datetime.now(timezone.utc)
     findings = [f for f in (classify_item(item, now, horizon) for item in items) if f]
     findings.sort(key=lambda f: f["_sort"])
     expired = sum(1 for f in findings if f["days_left"] < 0)
@@ -122,9 +122,9 @@ def build_report_data(items, horizon, subs_scanned, notes):
 
 
 def _credential():
-    from azure.identity import DefaultAzureCredential
+    from agent_identity import agent_credential
 
-    return DefaultAzureCredential()
+    return agent_credential()
 
 
 def _from_unix(value):

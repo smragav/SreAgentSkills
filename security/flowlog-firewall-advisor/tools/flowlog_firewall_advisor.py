@@ -14,7 +14,6 @@ over its REST API because azure-monitor-query is not present in the agent runtim
 """
 
 import argparse
-import base64
 import ipaddress
 import json
 import os
@@ -542,65 +541,25 @@ def _bicep_snippet(rule):
 # ---------------------------------------------------------------------------
 
 def _credential(client_id=None):
-    """An agent can carry both a system assigned and a user assigned identity, and only
-    one of them holds the roles. Pin the client id so the choice is never implicit."""
-    from azure.identity import DefaultAzureCredential
+    from agent_identity import agent_credential
 
-    client_id = client_id or os.environ.get("AZURE_CLIENT_ID")
-    if client_id:
-        return DefaultAzureCredential(managed_identity_client_id=client_id)
-    return DefaultAzureCredential()
+    return agent_credential(client_id)
 
 
 def resolve_agent_identity():
-    """Client id of the user assigned identity attached to this agent, if there is one.
+    from agent_identity import resolve_agent_identity as resolve
 
-    The runtime resolves to the agent's system assigned identity, which commonly holds
-    no role assignments at all, so a read succeeds and returns almost nothing. The
-    token names the agent resource in `xms_mirid`, and that resource lists its own
-    identities, so the one carrying the roles can be found rather than configured.
-    Returns None outside the agent, where the ambient credential is already right.
-    """
-    import requests
-
-    try:
-        token = _credential().get_token("https://management.azure.com/.default").token
-        body = token.split(".")[1]
-        claims = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
-        agent_resource = claims.get("xms_mirid") or ""
-        if "/agents/" not in agent_resource.lower():
-            return None
-        response = requests.get(
-            "https://management.azure.com%s?api-version=2025-05-01-preview" % agent_resource,
-            headers={"Authorization": "Bearer %s" % token}, timeout=60)
-        if response.status_code != 200:
-            return None
-        identities = (response.json().get("identity") or {}).get("userAssignedIdentities") or {}
-        for details in identities.values():
-            if details.get("clientId"):
-                return details["clientId"]
-    except Exception:
-        return None
-    return None
+    return resolve()
 
 
 def identity_report(client_id=None):
     """Which principal each audience resolves to. Answers 'authorization failed' quickly."""
-    report = {"client_id_in_use": client_id or os.environ.get("AZURE_CLIENT_ID") or "(none, implicit)"}
-    for label, scope in (("resource_manager", "https://management.azure.com/.default"),
-                         ("log_analytics", "https://api.loganalytics.io/.default")):
-        try:
-            token = _credential(client_id).get_token(scope).token
-            body = token.split(".")[1]
-            claims = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
-            report[label] = {
-                "object_id": claims.get("oid", ""),
-                "app_id": claims.get("appid", ""),
-                "identity_resource": claims.get("xms_mirid", ""),
-            }
-        except Exception as error:
-            report[label] = {"error": str(error)[:300]}
-    return report
+    from agent_identity import identity_report as report
+
+    return report(client_id, scopes=(
+        ("resource_manager", "https://management.azure.com/.default"),
+        ("log_analytics", "https://api.loganalytics.io/.default"),
+    ))
 
 
 def discover_workspaces(client_id=None):

@@ -41,7 +41,7 @@ def test_build_report_data_sorted_soonest_first():
         {"name": "later", "kind": "Key Vault certificate", "source": "v", "subscription": "a", "expiry": NOW + timedelta(days=20)},
         {"name": "expired", "kind": "Key Vault secret", "source": "v", "subscription": "a", "expiry": NOW - timedelta(days=1)},
     ]
-    data = es.build_report_data(items, 60, 1, [])
+    data = es.build_report_data(items, 60, 1, [], now=NOW)
     assert data["findings"]["rows"][0]["item"] == "expired"  # soonest first
     assert data["summary_cards"][1]["value"] == "1"  # one expired
 
