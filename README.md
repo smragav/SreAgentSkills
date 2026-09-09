@@ -4,6 +4,13 @@ A collection of skills for the Azure SRE Agent, grouped by pillar, with a flagsh
 
 This repository holds the source. The running artifacts live inside the SRE Agent, authored in the Builder or deployed as code with the shared data plane script.
 
+## Demo dashboard
+
+Two self contained pages at the repository root, both offline capable like the reports themselves:
+
+- [index.html](index.html) walks the whole suite as one story in seven acts, links every rendered sample report, lists all skills in a filterable table, and carries a fifteen minute demo script.
+- [capabilities.html](capabilities.html) covers what each skill assesses check by check, which Azure APIs and agent tools it uses, and how it sits next to Azure Advisor, Defender for Cloud, Azure Policy, Service Health, and Cost Management, including where the native tool is the better answer.
+
 ## Pillars and skills
 
 | Pillar | Skill | What it does |

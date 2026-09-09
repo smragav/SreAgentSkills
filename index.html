@@ -1,0 +1,579 @@
+<!doctype html>
+<html lang='en'>
+<head>
+<meta charset='utf-8'>
+<meta name='viewport' content='width=device-width,initial-scale=1'>
+<title>Azure SRE Agent Extensions</title>
+<style>
+:root{
+--bg:#faf9f8;--surface:#ffffff;--surface-2:#f3f2f1;--surface-3:#faf9f8;
+--text:#201f1e;--text-2:#605e5c;--text-3:#8a8886;
+--border:#edebe9;--border-2:#e1dfdd;
+--accent:#0078d4;--accent-hover:#106ebe;--accent-soft:#deecf9;
+--shadow:0 1.6px 3.6px rgba(0,0,0,.10),0 .3px .9px rgba(0,0,0,.07);
+--shadow-lg:0 6.4px 14.4px rgba(0,0,0,.13),0 1.2px 3.6px rgba(0,0,0,.10);
+--radius:6px;--radius-sm:4px;
+--sev-critical:#a4262c;--sev-high:#d13438;--sev-medium:#c77700;--sev-low:#605e5c;--sev-info:#0078d4;
+--conf-very-high:#107c10;--conf-high:#107c10;--conf-medium:#c77700;--conf-low:#a4262c;
+--good:#107c10;
+--code-bg:#f3f2f1;--code-text:#201f1e;--track:#c8c6c4;--track-on:#0078d4;
+color-scheme:light}
+html[data-theme='dark']{
+--bg:#1b1a19;--surface:#252423;--surface-2:#323130;--surface-3:#2b2a29;
+--text:#f3f2f1;--text-2:#c8c6c4;--text-3:#a19f9d;
+--border:#3b3a39;--border-2:#484644;
+--accent:#4db2ff;--accent-hover:#6cbcff;--accent-soft:#123047;
+--shadow:0 1.6px 3.6px rgba(0,0,0,.4),0 .3px .9px rgba(0,0,0,.3);
+--shadow-lg:0 6.4px 14.4px rgba(0,0,0,.5),0 1.2px 3.6px rgba(0,0,0,.4);
+--sev-critical:#f1707b;--sev-high:#f1707b;--sev-medium:#f0a35e;--sev-low:#c8c6c4;--sev-info:#4db2ff;
+--conf-very-high:#5bbf5b;--conf-high:#5bbf5b;--conf-medium:#f0a35e;--conf-low:#f1707b;
+--good:#5bbf5b;
+--code-bg:#1e1e1e;--code-text:#f3f2f1;--track:#605e5c;--track-on:#4db2ff;
+color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 "Segoe UI","Segoe UI Web (West European)",-apple-system,BlinkMacSystemFont,Roboto,"Helvetica Neue",Arial,sans-serif}
+a{color:var(--accent)}
+
+/* app bar */
+.appbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:9px 20px;background:var(--surface);border-bottom:1px solid var(--border);box-shadow:var(--shadow)}
+.appbar-brand{display:flex;align-items:center;gap:10px;font-weight:600;font-size:14px;color:var(--text)}
+.appbar-logo{width:16px;height:16px;border-radius:3px;background:linear-gradient(135deg,var(--accent),#5c2d91)}
+.appbar-right{display:flex;align-items:center;gap:10px}
+.theme-switch{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border-2);background:var(--surface-2);color:var(--text-2);border-radius:999px;padding:5px 12px 5px 8px;cursor:pointer;font:inherit;font-size:12px}
+.theme-switch:hover{border-color:var(--accent)}
+.theme-switch__track{position:relative;width:34px;height:18px;border-radius:999px;background:var(--track);transition:background .15s;flex:none}
+.theme-switch__thumb{position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:left .15s;box-shadow:0 1px 2px rgba(0,0,0,.4)}
+.theme-switch[aria-checked='true'] .theme-switch__track{background:var(--track-on)}
+.theme-switch[aria-checked='true'] .theme-switch__thumb{left:18px}
+.theme-switch__label{min-width:62px;text-align:left}
+
+/* layout */
+.wrap{max-width:1360px;margin:0 auto;padding:24px 24px 64px}
+h1{font-size:28px;font-weight:600;margin:0 0 6px;color:var(--text)}
+.subtitle{color:var(--text-2);margin:0 0 14px;font-size:15px;max-width:80ch}
+.meta{display:flex;flex-wrap:wrap;gap:6px 20px;color:var(--text-2);font-size:12.5px;margin-bottom:22px}
+.meta b{color:var(--text);font-weight:600}
+.group-title{font-size:18px;font-weight:600;margin:30px 0 12px;color:var(--text)}
+.note{color:var(--text-2);font-size:13px;line-height:1.6}
+.small{font-size:12px;color:var(--text-3);line-height:1.55}
+.hidden{display:none}
+
+/* cards */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:14px;margin:0 0 8px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow)}
+.card-label{color:var(--text-2);font-size:11px;text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+.card-value{font-size:26px;font-weight:600;margin-top:6px;color:var(--text);line-height:1.15}
+.card-sub{color:var(--text-2);font-size:12px;margin-top:2px}
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;margin-bottom:18px;box-shadow:var(--shadow)}
+
+/* view tabs */
+.viewtabs{display:inline-flex;border:1px solid var(--border-2);border-radius:999px;background:var(--surface-2);padding:3px;gap:2px}
+.viewtabs button{border:0;background:none;font:inherit;font-size:12.5px;font-weight:600;color:var(--text-2);padding:5px 14px;border-radius:999px;cursor:pointer}
+.viewtabs button[aria-selected='true']{background:var(--surface);color:var(--text);box-shadow:var(--shadow)}
+.viewtabs button:hover{color:var(--text)}
+.navlinks{display:flex;gap:2px}
+.navlinks a{font-size:12.5px;font-weight:600;color:var(--text-2);text-decoration:none;padding:5px 12px;border-radius:999px}
+.navlinks a:hover{color:var(--text);background:var(--surface-2)}
+.navlinks a[aria-current='page']{color:var(--text);background:var(--surface-2)}
+
+/* story acts */
+.act{position:relative;padding:0 0 4px 46px;margin:0 0 10px}
+.act:before{content:'';position:absolute;left:15px;top:34px;bottom:-10px;width:2px;background:var(--border-2)}
+.act:last-of-type:before{display:none}
+.act-num{position:absolute;left:0;top:0;width:32px;height:32px;border-radius:50%;background:var(--surface);border:2px solid var(--accent);color:var(--accent);font-weight:600;font-size:13px;display:flex;align-items:center;justify-content:center;z-index:1}
+.act-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 12px;min-height:32px}
+.act-title{font-size:19px;font-weight:600;color:var(--text);margin:0}
+.act-q{color:var(--accent);font-size:13.5px;font-weight:600}
+.act-lede{color:var(--text-2);font-size:13.5px;line-height:1.65;margin:8px 0 14px;max-width:92ch}
+.act-lede b{color:var(--text);font-weight:600}
+.thread{display:flex;gap:10px;align-items:flex-start;margin:14px 0 26px;padding:11px 14px;background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent) 30%,transparent);border-radius:var(--radius);font-size:13px;color:var(--text);line-height:1.6}
+.thread-tag{flex:none;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);padding-top:2px}
+
+/* report cards */
+.rgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:14px}
+.rcard{display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:var(--radius);padding:14px 16px 12px;box-shadow:var(--shadow);transition:box-shadow .12s,transform .12s}
+.rcard:hover{box-shadow:var(--shadow-lg);transform:translateY(-1px)}
+.rcard.is-star{border-left-color:var(--sev-critical)}
+.rcard.is-none{border-left-color:var(--border-2);opacity:.9}
+.rcard-pillar{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3)}
+.rcard-name{font-size:15px;font-weight:600;margin:3px 0 5px;color:var(--text)}
+.rcard-q{color:var(--text-2);font-size:12.8px;line-height:1.55;margin:0 0 11px;flex:1}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
+.chip{display:inline-flex;align-items:baseline;gap:5px;padding:3px 9px;border-radius:10px;border:1px solid;font-size:11.5px;line-height:16px;white-space:nowrap}
+.chip b{font-weight:700;font-variant-numeric:tabular-nums}
+.chip.b-critical{color:var(--sev-critical);border-color:color-mix(in srgb,var(--sev-critical) 45%,transparent);background:color-mix(in srgb,var(--sev-critical) 12%,transparent)}
+.chip.b-high{color:var(--sev-high);border-color:color-mix(in srgb,var(--sev-high) 45%,transparent);background:color-mix(in srgb,var(--sev-high) 12%,transparent)}
+.chip.b-medium{color:var(--sev-medium);border-color:color-mix(in srgb,var(--sev-medium) 45%,transparent);background:color-mix(in srgb,var(--sev-medium) 12%,transparent)}
+.chip.b-info{color:var(--sev-info);border-color:color-mix(in srgb,var(--sev-info) 45%,transparent);background:color-mix(in srgb,var(--sev-info) 12%,transparent)}
+.chip.b-good{color:var(--good);border-color:color-mix(in srgb,var(--good) 45%,transparent);background:color-mix(in srgb,var(--good) 12%,transparent)}
+.chip.b-low{color:var(--text-2);border-color:var(--border-2);background:var(--surface-2)}
+.rcard-links{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn{display:inline-block;font-size:12px;font-weight:600;padding:5px 12px;border:1px solid var(--border-2);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);text-decoration:none}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{background:var(--accent-hover);border-color:var(--accent-hover);color:#fff}
+.btn.ghost{border-color:transparent;color:var(--text-2);padding-left:4px;padding-right:4px}
+.btn.ghost:hover{color:var(--accent)}
+.btn[aria-disabled='true']{opacity:.5;pointer-events:none}
+
+/* controls and table */
+.controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 12px}
+.filter,select{padding:7px 10px;border:1px solid var(--border-2);border-radius:var(--radius-sm);font:inherit;font-size:13px;background:var(--surface);color:var(--text)}
+.filter{flex:1;min-width:220px}
+select:focus,input:focus{outline:2px solid var(--accent);outline-offset:-1px}
+.count{color:var(--text-2);font-size:12.5px}
+table.data{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;font-size:13px;box-shadow:var(--shadow)}
+table.data th{background:var(--surface-2);text-align:left;padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;user-select:none;white-space:nowrap;color:var(--text);font-weight:600}
+table.data td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:top;color:var(--text)}
+table.data tr:last-child td{border-bottom:none}
+table.data tbody tr:hover{background:var(--surface-2)}
+table.plain{width:100%;border-collapse:collapse;font-size:13px}
+table.plain th{text-align:left;padding:9px 12px 9px 0;border-bottom:1px solid var(--border);color:var(--text-2);font-weight:600;white-space:nowrap;vertical-align:top}
+table.plain td{padding:9px 12px 9px 0;border-bottom:1px solid var(--border);vertical-align:top}
+table.plain tr:last-child th,table.plain tr:last-child td{border-bottom:none}
+.t-time{font-variant-numeric:tabular-nums;color:var(--accent);font-weight:600;white-space:nowrap;width:62px}
+.t-open{white-space:nowrap;width:230px}
+.say{color:var(--text-2);line-height:1.6}
+.say b{color:var(--text)}
+ul.notes{margin:6px 0 0;padding-left:20px;color:var(--text-2);font-size:13px;line-height:1.65}
+ul.notes li{margin:5px 0}
+footer{margin-top:36px;padding-top:18px;border-top:1px solid var(--border);color:var(--text-3);font-size:12px;text-align:center}
+@media print{.appbar,.controls,.viewtabs{display:none}.act:before{display:none}.rcard{break-inside:avoid}}
+@media (max-width:640px){.act{padding-left:0}.act:before,.act-num{display:none}.t-open{width:auto}}
+</style>
+<script>(function(){try{var s=localStorage.getItem('sre-theme');if(s!=='dark'&&s!=='light'){s=(window.matchMedia&&window.matchMedia('(prefers-color-scheme:dark)').matches)?'dark':'light';}document.documentElement.setAttribute('data-theme',s);}catch(e){document.documentElement.setAttribute('data-theme','light');}})();</script>
+</head>
+<body>
+
+<div class='appbar'>
+  <div class='appbar-brand'><span class='appbar-logo'></span>Azure SRE Agent Extensions</div>
+  <div class='appbar-right'>
+    <nav class='navlinks'>
+      <a href='index.html' aria-current='page'>The story</a>
+      <a href='capabilities.html'>What it assesses</a>
+    </nav>
+    <div class='viewtabs' role='tablist'>
+      <button id='tabStory' role='tab' aria-selected='true' onclick="setView('story')">Story</button>
+      <button id='tabCatalog' role='tab' aria-selected='false' onclick="setView('catalog')">All skills</button>
+      <button id='tabScript' role='tab' aria-selected='false' onclick="setView('script')">Demo script</button>
+    </div>
+    <button id='themeToggle' class='theme-switch' type='button' role='switch' aria-checked='false' onclick='toggleTheme()' title='Toggle light or dark theme'><span class='theme-switch__track'><span class='theme-switch__thumb'></span></span><span class='theme-switch__label'>Light mode</span></button>
+  </div>
+</div>
+
+<div class='wrap'>
+
+  <h1>One agent, one estate, seven acts</h1>
+  <p class='subtitle'>Twenty two read only skills for the Azure SRE Agent, told as a single story. Every number below comes from a rendered sample report in this repository, and every report opens offline with no external assets. Follow the acts in order and one resource, <b>vm-payments-01</b>, runs through the whole thing: flagged as a risk on Monday, degraded on Thursday, funded for a rebuild on Friday.</p>
+  <div class='meta'>
+    <span><b>Estate:</b> Contoso platform, 3 subscriptions</span>
+    <span><b>Resources in read scope:</b> 312</span>
+    <span><b>Reports:</b> 20 rendered samples</span>
+    <span><b>Access model:</b> Reader, read only</span>
+  </div>
+
+  <div class='cards'>
+    <div class='card'><div class='card-label'>Skills</div><div class='card-value'>22</div><div class='card-sub'>across 9 pillars</div></div>
+    <div class='card'><div class='card-label'>Sample reports</div><div class='card-value'>20</div><div class='card-sub'>self contained HTML</div></div>
+    <div class='card'><div class='card-label'>Resources scanned</div><div class='card-value'>312</div><div class='card-sub'>3 subscriptions</div></div>
+    <div class='card'><div class='card-label'>Lowest pillar score</div><div class='card-value' style='color:var(--sev-critical)'>49</div><div class='card-sub'>Performance Efficiency</div></div>
+    <div class='card'><div class='card-label'>Savings identified</div><div class='card-value' style='color:var(--good)'>$27,450</div><div class='card-sub'>per month, 14.9% of spend</div></div>
+    <div class='card'><div class='card-label'>Write actions taken</div><div class='card-value' style='color:var(--good)'>0</div><div class='card-sub'>a human runs every change</div></div>
+  </div>
+
+  <!-- ========================= STORY VIEW ========================= -->
+  <div id='view-story'>
+    <div class='panel' style='margin-top:22px'>
+      <div class='note'><b>How to read this page.</b> The suite is not a list of tools, it is a loop. You baseline the estate, find the risk, check the workloads, catch the drift, gate the change, work the incident, then close the loop and pay for the fix. Each act below answers one question, links to the reports that answer it, and hands a thread to the next act. The blue notes are the thread. For the checks behind each skill, the APIs it reads, and how it compares to Azure Advisor and Defender for Cloud, see <a href='capabilities.html'>What it assesses</a>.</div>
+    </div>
+    <div id='acts'></div>
+
+    <div class='group-title'>Also in the suite</div>
+    <div class='rgrid' id='extras'></div>
+  </div>
+
+  <!-- ========================= CATALOG VIEW ========================= -->
+  <div id='view-catalog' class='hidden'>
+    <div class='group-title'>All skills</div>
+    <div class='controls'>
+      <select id='catPillar' onchange='filterCatalog()'><option value=''>All pillars</option></select>
+      <select id='catAct' onchange='filterCatalog()'><option value=''>All acts</option></select>
+      <input class='filter' id='catText' onkeyup='filterCatalog()' placeholder='Filter skills, questions, headlines...'>
+      <span class='count' id='cat-count'></span>
+    </div>
+    <table id='catalog' class='data'>
+      <thead><tr>
+        <th onclick='sortTable(this)'>Act</th>
+        <th onclick='sortTable(this)'>Pillar</th>
+        <th onclick='sortTable(this)'>Skill</th>
+        <th onclick='sortTable(this)'>What it answers</th>
+        <th onclick='sortTable(this)'>Headline from the sample</th>
+        <th>Open</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+    <p class='small' style='margin-top:12px'>Sort any column by clicking its header. Two skills ship without a sample report because they do not use the shared HTML renderer.</p>
+  </div>
+
+  <!-- ========================= DEMO SCRIPT VIEW ========================= -->
+  <div id='view-script' class='hidden'>
+    <div class='group-title'>Fifteen minute demo script</div>
+    <div class='panel'>
+      <div class='note'>A running order for a customer session. Open each report in a new tab as you go, and keep this page as the spine you return to. Timings are cumulative and assume you let the customer interrupt, which they will.</div>
+    </div>
+    <div class='panel'>
+      <table class='plain' id='script'></table>
+    </div>
+
+    <div class='group-title'>The three lines that land</div>
+    <div class='panel'>
+      <ul class='notes'>
+        <li><b>Nothing here writes.</b> Every skill runs with Reader. The agent proposes the command, a human runs it. That is why security teams let it near production.</li>
+        <li><b>The reports are one file.</b> Inline CSS, CSS bar charts, no CDN, no images. Mail it, attach it to a change record, open it on a plane. It looks the same.</li>
+        <li><b>The findings pay for themselves.</b> The cost skill found $27,450 a month. The reliability skill found the Critical single instance. One funds the other, in the same session.</li>
+      </ul>
+    </div>
+
+    <div class='group-title'>Questions you will get, and the answer</div>
+    <div class='panel'>
+      <table class='plain'>
+        <tr><th style='width:290px'>Is the data real?</th><td class='say'>These are rendered samples on a synthetic Contoso estate, so the numbers are stable for a demo. The skills read live Azure Resource Graph, Azure Monitor, Activity Log, Resource Health, and the service control planes. Point the agent at a subscription and the same reports come back with your resources.</td></tr>
+        <tr><th>What if the agent cannot read something?</th><td class='say'>It records the resource as not assessed rather than failing the run. Coverage equals the read scope. A few skills touch data planes that need their own read role, such as Key Vault item metadata and Microsoft Graph for application credentials, and a denied read is reported, never assumed.</td></tr>
+        <tr><th>Can it fix things?</th><td class='say'>By design, no. It ranks the finding, shows the evidence, and hands you a copyable command. The change stays in your change process.</td></tr>
+        <tr><th>How does severity get decided?</th><td class='say'>Severity reflects blast radius and likelihood, not effort. A single instance virtual machine carrying checkout is Critical even though the fix is easy. Findings that infer a cause carry a separate confidence band, so a guess never reads like a fact.</td></tr>
+        <tr><th>How do we run it on a schedule?</th><td class='say'>Most skills ship an optional scheduled sweep and an optional custom agent alongside the skill. Deploy with the shared script, or paste the skill into the Builder by hand.</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class='group-title'>Method and limits</div>
+  <div class='panel'>
+    <ul class='notes'>
+      <li>Read only throughout. Skills propose recommendations and operator ready commands. A human reviews and runs anything that changes or deletes a resource.</li>
+      <li>Default Reader scope. Coverage equals the agent's read scope. A skill may ask for temporary access when a read is denied, but it never assigns roles itself.</li>
+      <li>Evidence first. Every finding carries its evidence and a severity or a confidence. Severity reflects blast radius and likelihood, not effort.</li>
+      <li>Counts are per report and per scope. Different skills scan different resource sets, for example 312 monitorable resources against 214 taggable ones, so do not add totals across reports.</li>
+      <li>The sample reports are a synthetic Contoso estate, generated on 2026-07-09 and 2026-07-10, so a demo stays stable. Timestamps inside the reports are the generation time, not today.</li>
+    </ul>
+  </div>
+
+  <footer>Azure SRE Agent Extensions. Source lives in this repository, the running skills live inside the agent. Every report on this page opens offline.</footer>
+</div>
+
+<script>
+/* ---------------------------------------------------------------- data --- */
+var SKILLS = [
+ {id:'well-architected-review',act:1,pillar:'Well-Architected',name:'Well-Architected Review',
+  q:'How does the whole estate score against the five Well-Architected pillars, in one run?',
+  headline:'Five pillar scores, lowest 49',
+  chips:[['54','Reliability','medium'],['61','Security','medium'],['80','Cost','good'],['52','Ops','medium'],['49','Performance','critical']],
+  report:'well-architected/well-architected-review/sample-report/well-architected-review-scorecard.html',
+  src:'well-architected/well-architected-review',star:true},
+
+ {id:'reliability-posture-review',act:2,pillar:'Reliability',name:'Reliability Posture Review',
+  q:'Where are the single points of failure and the redundancy gaps, ranked by blast radius?',
+  headline:'11 findings, 5 critical or high, vm-payments-01 is Critical',
+  chips:[['11','findings','high'],['5','critical or high','critical'],['312','scanned','low'],['6','resource types','low']],
+  report:'reliability-resilience/reliability-posture-review/sample-report/reliability-posture-review-scorecard.html',
+  src:'reliability-resilience/reliability-posture-review',star:true},
+
+ {id:'quota-limit-watch',act:2,pillar:'Reliability',name:'Quota and Limit Watch',
+  q:'Which compute, network, and storage counters will hit a quota before the next capacity request lands?',
+  headline:'7 counters above 80%, 3 above 90%',
+  chips:[['7','near limit','medium'],['3','above 90%','high'],['3','subscriptions','low'],['4','regions','low']],
+  report:'reliability-resilience/quota-limit-watch/sample-report/quota-limit-watch.html',
+  src:'reliability-resilience/quota-limit-watch'},
+
+ {id:'network-exposure-review',act:2,pillar:'Security',name:'Network Exposure Review',
+  q:'What is reachable from the internet right now, including storage and PaaS public endpoints?',
+  headline:'8 exposed resources, 2 critical on management or all ports',
+  chips:[['8','exposed','high'],['2','critical','critical'],['4','public PaaS','medium']],
+  report:'security/network-exposure-review/sample-report/network-exposure-review-report.html',
+  src:'security/network-exposure-review'},
+
+ {id:'identity-access-hygiene',act:2,pillar:'Security',name:'Identity and Access Hygiene',
+  q:'Who and what holds privilege, and how much of it is stale, classic, or non human?',
+  headline:'7 privileged findings, 2 high privilege service principals',
+  chips:[['7','privileged findings','high'],['2','high privilege SPs','critical'],['1','classic admin','medium']],
+  report:'security/identity-access-hygiene/sample-report/identity-access-hygiene-report.html',
+  src:'security/identity-access-hygiene'},
+
+ {id:'flowlog-firewall-advisor',act:2,pillar:'Security',name:'Flow Log Firewall Advisor',
+  q:'What does this virtual network actually talk to, expressed as firewall rules I can review?',
+  headline:'2 proposed rules from 49 observed connections',
+  chips:[['2','proposed rules','info'],['49','connections seen','low'],['5','already blocked','good'],['0.1%','policy budget','good']],
+  report:'security/flowlog-firewall-advisor/sample-report/flowlog-firewall-advisor-report.html',
+  src:'security/flowlog-firewall-advisor'},
+
+ {id:'aks-reliability-review',act:3,pillar:'Workload health',name:'AKS Reliability Review',
+  q:'Do the Kubernetes clusters follow reliability and operational best practice, cluster by cluster?',
+  headline:'6 clusters, 13 findings, 71% of checks pass',
+  chips:[['6','clusters','low'],['13','findings','high'],['5','critical or high','critical'],['71%','checks pass','medium']],
+  report:'workload-health/aks-reliability-review/sample-report/aks-reliability-review.html',
+  src:'workload-health/aks-reliability-review'},
+
+ {id:'appservice-containerapps-health',act:3,pillar:'Workload health',name:'App Service and Container Apps Health',
+  q:'Are the web and container apps scaled, probed, and encrypted the way we think they are?',
+  headline:'41 apps, 15 findings, web-checkout has Always On disabled',
+  chips:[['41','apps','low'],['15','findings','high'],['6','critical or high','critical'],['4','TLS issues','medium']],
+  report:'workload-health/appservice-containerapps-health/sample-report/appservice-containerapps-health.html',
+  src:'workload-health/appservice-containerapps-health',star:true},
+
+ {id:'data-platform-review',act:3,pillar:'Workload health',name:'Data Platform Review',
+  q:'Across SQL, PostgreSQL, MySQL, and Cosmos DB, what survives losing a region?',
+  headline:'28 databases, only 60% geo redundant',
+  chips:[['28','databases','low'],['12','findings','high'],['5','critical or high','critical'],['60%','geo redundant','medium']],
+  report:'workload-health/data-platform-review/sample-report/data-platform-review.html',
+  src:'workload-health/data-platform-review'},
+
+ {id:'certificate-secret-expiry',act:4,pillar:'Governance',name:'Certificate and Secret Expiry',
+  q:'What expires in the next sixty days, and what has already expired without anyone noticing?',
+  headline:'9 expiring in 60 days, 2 already expired',
+  chips:[['9','expiring in 60d','high'],['2','already expired','critical'],['6','vaults','low'],['14','app credentials','low']],
+  report:'governance/certificate-secret-expiry/sample-report/certificate-secret-expiry-60d.html',
+  src:'governance/certificate-secret-expiry'},
+
+ {id:'deprecation-retirement-tracker',act:4,pillar:'Governance',name:'Deprecation and Retirement Tracker',
+  q:'What is Microsoft retiring under us, and which deadline arrives first?',
+  headline:'10 end of life items, 3 with a deadline inside 90 days',
+  chips:[['10','findings','high'],['4','critical or high','critical'],['3','retiring in 90d','high'],['214','scanned','low']],
+  report:'governance/deprecation-retirement-tracker/sample-report/deprecation-retirement-tracker.html',
+  src:'governance/deprecation-retirement-tracker'},
+
+ {id:'tag-governance-compliance',act:4,pillar:'Governance',name:'Tag Governance Compliance',
+  q:'Can we bill, own, and page for every resource, or does the tag standard have holes?',
+  headline:'78% compliant, 47 resources missing a required tag',
+  chips:[['78%','compliant','medium'],['47','non compliant','high'],['5','required tags','low'],['214','scanned','low']],
+  report:'governance/tag-governance-compliance/sample-report/tag-governance-compliance.html',
+  src:'governance/tag-governance-compliance'},
+
+ {id:'sql-cmdb-inventory',act:4,pillar:'Governance',name:'SQL CMDB Inventory',
+  q:'What is the full SQL estate, across VM, Arc, Managed Instance, and Azure SQL?',
+  headline:'CMDB inventory enriched with Defender counts',
+  chips:[['4','SQL surfaces','info'],['CMDB','feed','low']],
+  report:'',src:'governance/sql-cmdb-inventory'},
+
+ {id:'pre-change-readiness',act:5,pillar:'Operational excellence',name:'Pre-Change Readiness',
+  q:'Before Thursday night, is this scope safe to change? Go or no go, with the reasons.',
+  headline:'NO-GO on Production and rg-web, 5 findings',
+  chips:[['NO-GO','overall','critical'],['2','reliability','high'],['2','exposure','high'],['1','capacity','medium']],
+  report:'operational-excellence/pre-change-readiness/sample-report/pre-change-readiness-report.html',
+  src:'operational-excellence/pre-change-readiness',star:true},
+
+ {id:'change-audit',act:5,pillar:'Operational excellence',name:'Change Audit',
+  q:'What actually changed in the last seven days, and did any of it land just before a degradation?',
+  headline:'5 changes, 1 immediately precedes a degradation',
+  chips:[['5','changes in 7d','low'],['1','precedes a degradation','critical'],['1','delete','medium'],['1','failed','medium']],
+  report:'operational-excellence/change-audit/sample-report/change-audit-report.html',
+  src:'operational-excellence/change-audit',star:true},
+
+ {id:'incident-triage-rca',act:6,pillar:'Incident response',name:'Incident Triage and RCA',
+  q:'It is degraded now. What changed, what else is affected, and what is the probable cause?',
+  headline:'vm-payments-01 degraded at 14:02 UTC, connection pool change, high confidence',
+  chips:[['Degraded','health','critical'],['14:02','first breach','high'],['Checkout API','impact','high'],['High','confidence','good']],
+  report:'incident-response/incident-triage-rca/sample-report/incident-report-vm-payments-01.html',
+  src:'incident-response/incident-triage-rca',star:true},
+
+ {id:'blameless-postmortem-writer',act:6,pillar:'Incident response',name:'Blameless Postmortem Writer',
+  q:'Can the same facts become a postmortem the team will actually read, without naming anyone?',
+  headline:'INC-2026-0142, Sev2, 46 minutes, 12% of checkout requests timed out',
+  chips:[['Sev2','severity','critical'],['46 min','duration','high'],['12%','requests timed out','high'],['Resolved','status','good']],
+  report:'incident-response/blameless-postmortem-writer/sample-report/postmortem-checkout-latency-incident-20260709-190337.html',
+  src:'incident-response/blameless-postmortem-writer',star:true},
+
+ {id:'recurring-incident-patterns',act:6,pillar:'Incident response',name:'Recurring Incident Patterns',
+  q:'Is this a one off, or have we been paged for the same thing all month?',
+  headline:'19 incidents in 30 days, 3 repeat offenders',
+  chips:[['19','incidents in 30d','high'],['3','repeat offenders','critical'],['4','resources affected','medium']],
+  report:'incident-response/recurring-incident-patterns/sample-report/recurring-incident-patterns-report.html',
+  src:'incident-response/recurring-incident-patterns'},
+
+ {id:'observability-coverage-gap',act:7,pillar:'Observability',name:'Observability Coverage Gaps',
+  q:'Which resources would fail silently, because nothing is logging them and nothing would page us?',
+  headline:'58 of 312 resources have a gap, 40 have no alert at all',
+  chips:[['58','with gaps','critical'],['31','no diagnostics','high'],['40','no alerts','critical'],['312','scanned','low']],
+  report:'observability/observability-coverage-gap/sample-report/observability-coverage-gap.html',
+  src:'observability/observability-coverage-gap',star:true},
+
+ {id:'alert-hygiene-review',act:7,pillar:'Observability',name:'Alert Hygiene Review',
+  q:'Of the alerts we do have, which ones are noise, which cry wolf, and which are silently switched off?',
+  headline:'96 rules reviewed, 15 are noisy, cry wolf, or disabled',
+  chips:[['96','rules reviewed','low'],['6','noisy','high'],['4','cry wolf','medium'],['5','silently disabled','critical']],
+  report:'observability/alert-hygiene-review/sample-report/alert-hygiene-review-7d.html',
+  src:'observability/alert-hygiene-review',star:true},
+
+ {id:'finops-cost-optimizer',act:7,pillar:'Cost optimization',name:'FinOps Cost Optimizer',
+  q:'Where is the money going, what is idle, and what can we safely stop paying for?',
+  headline:'$27,450 a month identified, 14.9% of analysed spend',
+  chips:[['$184.2K','spend analysed','low'],['$27,450','monthly savings','good'],['14.9%','of spend','good'],['5','termination candidates','medium']],
+  report:'finops-cost-optimizer/sample-report/finops-report-20260709-190337.html',
+  src:'finops-cost-optimizer',star:true},
+
+ {id:'azure-arch',act:0,pillar:'Architecture',name:'Azure Architecture Generator',
+  q:'From a VM inventory, what should the target landing zone look like and roughly what will it cost?',
+  headline:'draw.io diagram, Excel cost workbook, CSV and JSON metadata',
+  chips:[['Design','not a review','info'],['draw.io','MCP connector','low']],
+  report:'',src:'architecture/azure-arch'}
+];
+
+var ACTS = [
+ {n:1,title:'Baseline the estate',q:'Where do we actually stand?',
+  lede:"Start at the front door. One run of the Well-Architected review scores all five pillars over three subscriptions and turns an opinion into a number. Cost Optimization comes back <b>80</b>, which is fine. Performance Efficiency comes back <b>49</b> and Operational Excellence <b>52</b>, which is not. Nobody argues with the agenda after this slide.",
+  thread:'Reliability scores 54. That is the pillar the rest of the story is about, so we go looking for what is dragging it down.'},
+
+ {n:2,title:'Find the risk',q:'What can hurt us, and how badly?',
+  lede:"Five skills go looking for the things that take an estate down: single points of failure, quotas about to bite, an attack surface nobody drew, privilege that outlived its owner, and firewall rules that do not match real traffic. Everything is ranked by blast radius rather than by how easy it is to fix. The reliability review returns eleven findings, and the top one is a <b>Critical</b>: <b>vm-payments-01</b> is a single instance virtual machine with no availability zone.",
+  thread:'Remember the name vm-payments-01. It is a Critical finding on a Monday, and it is the resource the pager goes off for on Thursday.'},
+
+ {n:3,title:'Check the workloads',q:'How are the applications actually holding up?',
+  lede:"Posture at the platform layer is not the same as health at the application layer, so three skills go deeper: six AKS clusters, forty one web and container apps, twenty eight databases across four engines. Only <b>71%</b> of the Kubernetes best practice checks pass, only <b>60%</b> of the databases are geo redundant, and <b>web-checkout</b> is running with Always On disabled.",
+  thread:'web-checkout sits in front of the payments virtual machine. Two findings, two skills, one user journey.'},
+
+ {n:4,title:'Catch the drift',q:'What is quietly ageing while we look elsewhere?',
+  lede:"Nothing in this act pages anyone, which is exactly why it hurts later. Certificates and secrets expire, Microsoft retires the runtime under you, and the tag standard erodes until you cannot bill or page for half the estate. Two certificates have <b>already expired</b>, three retirements have a deadline inside ninety days, and <b>47</b> resources are missing a required tag.",
+  thread:'Missing owner tags are not a paperwork problem. In Act 6 they are the reason it takes longer to find the right person at two in the morning.'},
+
+ {n:5,title:'Gate the change',q:'Is it safe to ship on Thursday night?',
+  lede:"Pre change readiness runs against the target scope and returns a straight <b>NO-GO</b> for Production and rg-web, with five findings across reliability, exposure, and capacity. The change goes ahead anyway, which is the most realistic part of this demo. Afterwards the change audit reconstructs the week from the activity log: five changes, one delete, one failure, and <b>one change that lands immediately before a health degradation</b>.",
+  thread:'That one change is a connection pool configuration change. Twenty minutes later the pager goes off.'},
+
+ {n:6,title:'Work the incident',q:'It is 14:02 UTC. What happened and why?',
+  lede:"Triage pulls health, activity log, and neighbouring resources into one timeline and names a probable cause with an explicit <b>high confidence</b> band: the configuration change shrank the database connection pool on <b>vm-payments-01</b>. Rolling it back restores service. The postmortem writer turns the same facts into <b>INC-2026-0142</b>, a Sev2 lasting forty six minutes in which twelve percent of checkout requests timed out, written blamelessly about systems rather than people. Then the pattern skill zooms out: nineteen incidents in thirty days and <b>three repeat offenders</b>.",
+  thread:'The real question is not what broke. It is why a Critical finding raised on Monday was still live on Thursday, and why detection took as long as it did.'},
+
+ {n:7,title:'Close the loop and fund the fix',q:'Why did we not see it sooner, and who pays for the fix?',
+  lede:"Two skills answer the detection half. <b>58 of 312</b> resources have a monitoring gap, forty of them with no alert rule at all, and of the ninety six rules that do exist, six are noisy, four resolve themselves before anyone looks, and <b>five are silently disabled</b>. Then the cost skill answers the funding half: <b>$27,450 a month</b>, 14.9% of analysed spend, with five termination candidates scored for idleness.",
+  thread:'Closing line for the room: the cost report pays for the zone redundant rebuild of vm-payments-01, several times over, and the loop starts again at Act 1 with a higher score.'}
+];
+
+var SCRIPT = [
+ ['0:00','This dashboard','Open on the Story tab. <b>Twenty two skills, one agent, zero writes.</b> Say the estate is three subscriptions and 312 resources, and that every number on the page comes from a report you can open.'],
+ ['1:00','Well-Architected Review','<b>One run, five pillar scores.</b> Point at Performance 49 and Operational Excellence 52. Say this is the only slide you need to set an agenda with a customer.'],
+ ['3:00','Reliability Posture Review','Sort the table by severity. Stop on the Critical row. <b>vm-payments-01, single instance, no availability zone.</b> Tell the room to remember the name.'],
+ ['5:00','Pre-Change Readiness','<b>NO-GO.</b> Five findings across reliability, exposure, and capacity, before the change window opens. Ask the room how their current go or no go decision gets made.'],
+ ['6:30','Change Audit','The change shipped anyway. <b>One of five changes lands immediately before a degradation.</b> This is reconstructed from the activity log, not from a ticket.'],
+ ['8:00','Incident Triage and RCA','<b>14:02 UTC.</b> Same virtual machine. The agent names the connection pool change as the probable cause and labels it high confidence, so a hypothesis never reads like a fact.'],
+ ['9:30','Blameless Postmortem','Same facts, different document. <b>Sev2, 46 minutes, 12% of checkout requests.</b> Scroll the timeline and the action items. No names anywhere.'],
+ ['11:00','Observability Coverage Gaps','Now answer why detection was slow. <b>58 of 312 resources have a gap. Forty have no alert at all.</b>'],
+ ['12:00','Alert Hygiene Review','And of the alerts that exist, <b>five are silently disabled.</b> This is the slide that makes the operations lead lean forward.'],
+ ['13:00','FinOps Cost Optimizer','<b>$27,450 a month, 14.9% of spend.</b> Close with it: this funds the zone redundant rebuild of the Critical finding from minute three, and the loop restarts.'],
+ ['14:30','Back to this dashboard','Switch to the All skills tab. Show the remaining skills you did not open, then stop talking and take questions.']
+];
+
+/* -------------------------------------------------------------- render --- */
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+
+function chipHtml(c){return "<span class='chip b-"+esc(c[2])+"'><b>"+esc(c[0])+"</b> "+esc(c[1])+"</span>";}
+
+function cardHtml(s){
+  var links = s.report
+    ? "<a class='btn primary' href='"+esc(s.report)+"' target='_blank' rel='noopener'>Open report</a>"
+    : "<span class='btn' aria-disabled='true'>No sample report</span>";
+  links += "<a class='btn ghost' href='"+esc(s.src)+"/SKILL.md' target='_blank' rel='noopener'>SKILL.md</a>";
+  var cls = 'rcard' + (s.star ? ' is-star' : '') + (s.report ? '' : ' is-none');
+  return "<div class='"+cls+"'>"
+    + "<div class='rcard-pillar'>"+esc(s.pillar)+"</div>"
+    + "<div class='rcard-name'>"+esc(s.name)+"</div>"
+    + "<p class='rcard-q'>"+esc(s.q)+"</p>"
+    + "<div class='chips'>"+s.chips.map(chipHtml).join('')+"</div>"
+    + "<div class='rcard-links'>"+links+"</div>"
+    + "</div>";
+}
+
+function renderActs(){
+  var host = document.getElementById('acts'), out = [];
+  ACTS.forEach(function(a){
+    var mine = SKILLS.filter(function(s){return s.act===a.n;});
+    out.push("<div class='act'>"
+      + "<div class='act-num'>"+a.n+"</div>"
+      + "<div class='act-head'><h2 class='act-title'>Act "+a.n+". "+esc(a.title)+"</h2><span class='act-q'>"+esc(a.q)+"</span></div>"
+      + "<p class='act-lede'>"+a.lede+"</p>"
+      + "<div class='rgrid'>"+mine.map(cardHtml).join('')+"</div>"
+      + "<div class='thread'><span class='thread-tag'>Thread</span><span>"+esc(a.thread)+"</span></div>"
+      + "</div>");
+  });
+  host.innerHTML = out.join('');
+  document.getElementById('extras').innerHTML =
+    SKILLS.filter(function(s){return s.act===0;}).map(cardHtml).join('');
+}
+
+function renderCatalog(){
+  var tb = document.querySelector('#catalog tbody'), out = [];
+  var pillars = [], acts = [];
+  var rank = function(s){return s.act===0 ? 99 : s.act;};
+  SKILLS.slice().sort(function(x,y){
+    return (rank(x)-rank(y)) || (x.pillar<y.pillar?-1:x.pillar>y.pillar?1:0) || (x.name<y.name?-1:1);
+  }).forEach(function(s){
+    if(pillars.indexOf(s.pillar)<0) pillars.push(s.pillar);
+    var actLabel = s.act===0 ? 'Extra' : 'Act '+s.act;
+    if(acts.indexOf(actLabel)<0) acts.push(actLabel);
+    var open = s.report
+      ? "<a class='btn primary' href='"+esc(s.report)+"' target='_blank' rel='noopener'>Report</a> <a class='btn ghost' href='"+esc(s.src)+"/SKILL.md' target='_blank' rel='noopener'>Skill</a>"
+      : "<a class='btn ghost' href='"+esc(s.src)+"/SKILL.md' target='_blank' rel='noopener'>Skill</a>";
+    out.push("<tr data-pillar='"+esc(s.pillar)+"' data-act='"+esc(actLabel)+"'>"
+      + "<td data-sort='"+rank(s)+"' style='white-space:nowrap'>"+esc(actLabel)+"</td>"
+      + "<td>"+esc(s.pillar)+"</td>"
+      + "<td><b>"+esc(s.name)+"</b></td>"
+      + "<td>"+esc(s.q)+"</td>"
+      + "<td>"+esc(s.headline)+"</td>"
+      + "<td style='white-space:nowrap'>"+open+"</td></tr>");
+  });
+  tb.innerHTML = out.join('');
+  var ps = document.getElementById('catPillar');
+  pillars.sort().forEach(function(p){ps.insertAdjacentHTML('beforeend',"<option value='"+esc(p)+"'>"+esc(p)+"</option>");});
+  acts.sort();
+  var as = document.getElementById('catAct');
+  acts.forEach(function(a){as.insertAdjacentHTML('beforeend',"<option value='"+esc(a)+"'>"+esc(a)+"</option>");});
+  filterCatalog();
+}
+
+function renderScript(){
+  document.getElementById('script').innerHTML =
+    "<tr><th class='t-time'>Time</th><th class='t-open'>Open</th><th>Say this</th></tr>"
+    + SCRIPT.map(function(r){
+        return "<tr><td class='t-time'>"+esc(r[0])+"</td><td class='t-open'><b>"+esc(r[1])+"</b></td><td class='say'>"+r[2]+"</td></tr>";
+      }).join('');
+}
+
+/* ------------------------------------------------------------ behaviour --- */
+function filterCatalog(){
+  var p=(document.getElementById('catPillar')||{}).value||'';
+  var a=(document.getElementById('catAct')||{}).value||'';
+  var q=((document.getElementById('catText')||{}).value||'').toLowerCase();
+  var tb=document.querySelector('#catalog tbody'), shown=0;
+  Array.prototype.forEach.call(tb.rows,function(r){
+    var ok=(!p||r.dataset.pillar===p)&&(!a||r.dataset.act===a)&&r.innerText.toLowerCase().indexOf(q)>-1;
+    r.style.display=ok?'':'none'; if(ok)shown++;
+  });
+  var c=document.getElementById('cat-count'); if(c)c.textContent=shown+' of '+tb.rows.length+' shown';
+}
+
+function sortTable(th){
+  var t=th.closest('table'),tb=t.tBodies[0],i=Array.prototype.indexOf.call(th.parentNode.children,th);
+  var asc=!(th.dataset.asc==='1'); th.dataset.asc=asc?'1':'0';
+  var rows=Array.prototype.slice.call(tb.rows);
+  rows.sort(function(a,b){var x=cell(a,i),y=cell(b,i);return asc?(x>y?1:x<y?-1:0):(x<y?1:x>y?-1:0);});
+  rows.forEach(function(r){tb.appendChild(r);});
+}
+function cell(r,i){var c=r.cells[i];if(!c)return'';if(c.dataset.sort!==undefined)return parseFloat(c.dataset.sort)||0;var t=c.innerText.replace(/[$,%]/g,'').trim();var n=parseFloat(t);return isNaN(n)?c.innerText.toLowerCase():n;}
+
+function setView(v){
+  ['story','catalog','script'].forEach(function(name){
+    document.getElementById('view-'+name).classList.toggle('hidden',name!==v);
+    var b=document.getElementById('tab'+name.charAt(0).toUpperCase()+name.slice(1));
+    if(b)b.setAttribute('aria-selected',name===v?'true':'false');
+  });
+  window.scrollTo(0,0);
+}
+
+function setTheme(t){var d=document.documentElement;d.setAttribute('data-theme',t);try{localStorage.setItem('sre-theme',t);}catch(e){}
+var b=document.getElementById('themeToggle');if(b){b.setAttribute('aria-checked',t==='dark'?'true':'false');var l=b.querySelector('.theme-switch__label');if(l){l.textContent=t==='dark'?'Dark mode':'Light mode';}}}
+function toggleTheme(){var cur=document.documentElement.getAttribute('data-theme')==='dark'?'dark':'light';setTheme(cur==='dark'?'light':'dark');}
+
+(function(){
+  setTheme(document.documentElement.getAttribute('data-theme')==='dark'?'dark':'light');
+  renderActs(); renderCatalog(); renderScript();
+})();
+</script>
+</body>
+</html>
