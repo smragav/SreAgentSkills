@@ -173,7 +173,7 @@ footer{margin-top:36px;padding-top:18px;border-top:1px solid var(--border);color
   </div>
 
   <div class='cards'>
-    <div class='card'><div class='card-label'>Skills</div><div class='card-value'>22</div><div class='card-sub'>across 9 pillars</div></div>
+    <div class='card'><div class='card-label'>Skills</div><div class='card-value'>22</div><div class='card-sub'>across 8 categories</div></div>
     <div class='card'><div class='card-label'>Sample reports</div><div class='card-value'>20</div><div class='card-sub'>self contained HTML</div></div>
     <div class='card'><div class='card-label'>Resources scanned</div><div class='card-value'>312</div><div class='card-sub'>3 subscriptions</div></div>
     <div class='card'><div class='card-label'>Lowest pillar score</div><div class='card-value' style='color:var(--sev-critical)'>49</div><div class='card-sub'>Performance Efficiency</div></div>
@@ -196,7 +196,7 @@ footer{margin-top:36px;padding-top:18px;border-top:1px solid var(--border);color
   <div id='view-catalog' class='hidden'>
     <div class='group-title'>All skills</div>
     <div class='controls'>
-      <select id='catPillar' onchange='filterCatalog()'><option value=''>All pillars</option></select>
+      <select id='catPillar' onchange='filterCatalog()'><option value=''>All categories</option></select>
       <select id='catAct' onchange='filterCatalog()'><option value=''>All acts</option></select>
       <input class='filter' id='catText' onkeyup='filterCatalog()' placeholder='Filter skills, questions, headlines...'>
       <span class='count' id='cat-count'></span>
@@ -204,7 +204,7 @@ footer{margin-top:36px;padding-top:18px;border-top:1px solid var(--border);color
     <table id='catalog' class='data'>
       <thead><tr>
         <th onclick='sortTable(this)'>Act</th>
-        <th onclick='sortTable(this)'>Pillar</th>
+        <th onclick='sortTable(this)'>Category</th>
         <th onclick='sortTable(this)'>Skill</th>
         <th onclick='sortTable(this)'>What it answers</th>
         <th onclick='sortTable(this)'>Headline from the sample</th>
@@ -263,82 +263,82 @@ footer{margin-top:36px;padding-top:18px;border-top:1px solid var(--border);color
 <script>
 /* ---------------------------------------------------------------- data --- */
 var SKILLS = [
- {id:'well-architected-review',act:1,pillar:'Well-Architected',name:'Well-Architected Review',
+ {id:'well-architected-review',act:1,pillar:'Management',name:'Well-Architected Review',
   q:'How does the whole estate score against the five Well-Architected pillars, in one run?',
   headline:'Five pillar scores, lowest 49',
   chips:[['54','Reliability','medium'],['61','Security','medium'],['80','Cost','good'],['52','Ops','medium'],['49','Performance','critical']],
-  report:'well-architected/well-architected-review/sample-report/well-architected-review-scorecard.html',
-  src:'well-architected/well-architected-review',star:true},
+  report:'management/well-architected-review/sample-report/well-architected-review-scorecard.html',
+  src:'management/well-architected-review',star:true},
 
- {id:'reliability-posture-review',act:2,pillar:'Reliability',name:'Reliability Posture Review',
+ {id:'reliability-posture-review',act:2,pillar:'Management',name:'Reliability Posture Review',
   q:'Where are the single points of failure and the redundancy gaps, ranked by blast radius?',
   headline:'11 findings, 5 critical or high, vm-payments-01 is Critical',
   chips:[['11','findings','high'],['5','critical or high','critical'],['312','scanned','low'],['6','resource types','low']],
-  report:'reliability-resilience/reliability-posture-review/sample-report/reliability-posture-review-scorecard.html',
-  src:'reliability-resilience/reliability-posture-review',star:true},
+  report:'management/reliability-posture-review/sample-report/reliability-posture-review-scorecard.html',
+  src:'management/reliability-posture-review',star:true},
 
- {id:'quota-limit-watch',act:2,pillar:'Reliability',name:'Quota and Limit Watch',
+ {id:'quota-limit-watch',act:2,pillar:'Resource Organization',name:'Quota and Limit Watch',
   q:'Which compute, network, and storage counters will hit a quota before the next capacity request lands?',
   headline:'7 counters above 80%, 3 above 90%',
   chips:[['7','near limit','medium'],['3','above 90%','high'],['3','subscriptions','low'],['4','regions','low']],
-  report:'reliability-resilience/quota-limit-watch/sample-report/quota-limit-watch.html',
-  src:'reliability-resilience/quota-limit-watch'},
+  report:'resource-organization/quota-limit-watch/sample-report/quota-limit-watch.html',
+  src:'resource-organization/quota-limit-watch'},
 
- {id:'network-exposure-review',act:2,pillar:'Security',name:'Network Exposure Review',
+ {id:'network-exposure-review',act:2,pillar:'Network',name:'Network Exposure Review',
   q:'What is reachable from the internet right now, including storage and PaaS public endpoints?',
   headline:'8 exposed resources, 2 critical on management or all ports',
   chips:[['8','exposed','high'],['2','critical','critical'],['4','public PaaS','medium']],
-  report:'security/network-exposure-review/sample-report/network-exposure-review-report.html',
-  src:'security/network-exposure-review'},
+  report:'network/network-exposure-review/sample-report/network-exposure-review-report.html',
+  src:'network/network-exposure-review'},
 
- {id:'identity-access-hygiene',act:2,pillar:'Security',name:'Identity and Access Hygiene',
+ {id:'identity-access-hygiene',act:2,pillar:'Identity and Access',name:'Identity and Access Hygiene',
   q:'Who and what holds privilege, and how much of it is stale, classic, or non human?',
   headline:'7 privileged findings, 2 high privilege service principals',
   chips:[['7','privileged findings','high'],['2','high privilege SPs','critical'],['1','classic admin','medium']],
-  report:'security/identity-access-hygiene/sample-report/identity-access-hygiene-report.html',
-  src:'security/identity-access-hygiene'},
+  report:'identity-access/identity-access-hygiene/sample-report/identity-access-hygiene-report.html',
+  src:'identity-access/identity-access-hygiene'},
 
- {id:'flowlog-firewall-advisor',act:2,pillar:'Security',name:'Flow Log Firewall Advisor',
+ {id:'flowlog-firewall-advisor',act:2,pillar:'Network',name:'Flow Log Firewall Advisor',
   q:'What does this virtual network actually talk to, expressed as firewall rules I can review?',
   headline:'2 proposed rules from 49 observed connections',
   chips:[['2','proposed rules','info'],['49','connections seen','low'],['5','already blocked','good'],['0.1%','policy budget','good']],
-  report:'security/flowlog-firewall-advisor/sample-report/flowlog-firewall-advisor-report.html',
-  src:'security/flowlog-firewall-advisor'},
+  report:'network/flowlog-firewall-advisor/sample-report/flowlog-firewall-advisor-report.html',
+  src:'network/flowlog-firewall-advisor'},
 
- {id:'aks-reliability-review',act:3,pillar:'Workload health',name:'AKS Reliability Review',
+ {id:'aks-reliability-review',act:3,pillar:'Management',name:'AKS Reliability Review',
   q:'Do the Kubernetes clusters follow reliability and operational best practice, cluster by cluster?',
   headline:'6 clusters, 13 findings, 71% of checks pass',
   chips:[['6','clusters','low'],['13','findings','high'],['5','critical or high','critical'],['71%','checks pass','medium']],
-  report:'workload-health/aks-reliability-review/sample-report/aks-reliability-review.html',
-  src:'workload-health/aks-reliability-review'},
+  report:'management/aks-reliability-review/sample-report/aks-reliability-review.html',
+  src:'management/aks-reliability-review'},
 
- {id:'appservice-containerapps-health',act:3,pillar:'Workload health',name:'App Service and Container Apps Health',
+ {id:'appservice-containerapps-health',act:3,pillar:'Management',name:'App Service and Container Apps Health',
   q:'Are the web and container apps scaled, probed, and encrypted the way we think they are?',
   headline:'41 apps, 15 findings, web-checkout has Always On disabled',
   chips:[['41','apps','low'],['15','findings','high'],['6','critical or high','critical'],['4','TLS issues','medium']],
-  report:'workload-health/appservice-containerapps-health/sample-report/appservice-containerapps-health.html',
-  src:'workload-health/appservice-containerapps-health',star:true},
+  report:'management/appservice-containerapps-health/sample-report/appservice-containerapps-health.html',
+  src:'management/appservice-containerapps-health',star:true},
 
- {id:'data-platform-review',act:3,pillar:'Workload health',name:'Data Platform Review',
+ {id:'data-platform-review',act:3,pillar:'Management',name:'Data Platform Review',
   q:'Across SQL, PostgreSQL, MySQL, and Cosmos DB, what survives losing a region?',
   headline:'28 databases, only 60% geo redundant',
   chips:[['28','databases','low'],['12','findings','high'],['5','critical or high','critical'],['60%','geo redundant','medium']],
-  report:'workload-health/data-platform-review/sample-report/data-platform-review.html',
-  src:'workload-health/data-platform-review'},
+  report:'management/data-platform-review/sample-report/data-platform-review.html',
+  src:'management/data-platform-review'},
 
- {id:'certificate-secret-expiry',act:4,pillar:'Governance',name:'Certificate and Secret Expiry',
+ {id:'certificate-secret-expiry',act:4,pillar:'Security',name:'Certificate and Secret Expiry',
   q:'What expires in the next sixty days, and what has already expired without anyone noticing?',
   headline:'9 expiring in 60 days, 2 already expired',
   chips:[['9','expiring in 60d','high'],['2','already expired','critical'],['6','vaults','low'],['14','app credentials','low']],
-  report:'governance/certificate-secret-expiry/sample-report/certificate-secret-expiry-60d.html',
-  src:'governance/certificate-secret-expiry'},
+  report:'security/certificate-secret-expiry/sample-report/certificate-secret-expiry-60d.html',
+  src:'security/certificate-secret-expiry'},
 
- {id:'deprecation-retirement-tracker',act:4,pillar:'Governance',name:'Deprecation and Retirement Tracker',
+ {id:'deprecation-retirement-tracker',act:4,pillar:'Resource Organization',name:'Deprecation and Retirement Tracker',
   q:'What is Microsoft retiring under us, and which deadline arrives first?',
   headline:'10 end of life items, 3 with a deadline inside 90 days',
   chips:[['10','findings','high'],['4','critical or high','critical'],['3','retiring in 90d','high'],['214','scanned','low']],
-  report:'governance/deprecation-retirement-tracker/sample-report/deprecation-retirement-tracker.html',
-  src:'governance/deprecation-retirement-tracker'},
+  report:'resource-organization/deprecation-retirement-tracker/sample-report/deprecation-retirement-tracker.html',
+  src:'resource-organization/deprecation-retirement-tracker'},
 
  {id:'tag-governance-compliance',act:4,pillar:'Governance',name:'Tag Governance Compliance',
   q:'Can we bill, own, and page for every resource, or does the tag standard have holes?',
@@ -347,73 +347,73 @@ var SKILLS = [
   report:'governance/tag-governance-compliance/sample-report/tag-governance-compliance.html',
   src:'governance/tag-governance-compliance'},
 
- {id:'sql-cmdb-inventory',act:4,pillar:'Governance',name:'SQL CMDB Inventory',
+ {id:'sql-cmdb-inventory',act:4,pillar:'Resource Organization',name:'SQL CMDB Inventory',
   q:'What is the full SQL estate, across VM, Arc, Managed Instance, and Azure SQL?',
   headline:'CMDB inventory enriched with Defender counts',
   chips:[['4','SQL surfaces','info'],['CMDB','feed','low']],
-  report:'',src:'governance/sql-cmdb-inventory'},
+  report:'',src:'resource-organization/sql-cmdb-inventory'},
 
- {id:'pre-change-readiness',act:5,pillar:'Operational excellence',name:'Pre-Change Readiness',
+ {id:'pre-change-readiness',act:5,pillar:'Platform Automation',name:'Pre-Change Readiness',
   q:'Before Thursday night, is this scope safe to change? Go or no go, with the reasons.',
   headline:'NO-GO on Production and rg-web, 5 findings',
   chips:[['NO-GO','overall','critical'],['2','reliability','high'],['2','exposure','high'],['1','capacity','medium']],
-  report:'operational-excellence/pre-change-readiness/sample-report/pre-change-readiness-report.html',
-  src:'operational-excellence/pre-change-readiness',star:true},
+  report:'platform-automation/pre-change-readiness/sample-report/pre-change-readiness-report.html',
+  src:'platform-automation/pre-change-readiness',star:true},
 
- {id:'change-audit',act:5,pillar:'Operational excellence',name:'Change Audit',
+ {id:'change-audit',act:5,pillar:'Management',name:'Change Audit',
   q:'What actually changed in the last seven days, and did any of it land just before a degradation?',
   headline:'5 changes, 1 immediately precedes a degradation',
   chips:[['5','changes in 7d','low'],['1','precedes a degradation','critical'],['1','delete','medium'],['1','failed','medium']],
-  report:'operational-excellence/change-audit/sample-report/change-audit-report.html',
-  src:'operational-excellence/change-audit',star:true},
+  report:'management/change-audit/sample-report/change-audit-report.html',
+  src:'management/change-audit',star:true},
 
- {id:'incident-triage-rca',act:6,pillar:'Incident response',name:'Incident Triage and RCA',
+ {id:'incident-triage-rca',act:6,pillar:'Management',name:'Incident Triage and RCA',
   q:'It is degraded now. What changed, what else is affected, and what is the probable cause?',
   headline:'vm-payments-01 degraded at 14:02 UTC, connection pool change, high confidence',
   chips:[['Degraded','health','critical'],['14:02','first breach','high'],['Checkout API','impact','high'],['High','confidence','good']],
-  report:'incident-response/incident-triage-rca/sample-report/incident-report-vm-payments-01.html',
-  src:'incident-response/incident-triage-rca',star:true},
+  report:'management/incident-triage-rca/sample-report/incident-report-vm-payments-01.html',
+  src:'management/incident-triage-rca',star:true},
 
- {id:'blameless-postmortem-writer',act:6,pillar:'Incident response',name:'Blameless Postmortem Writer',
+ {id:'blameless-postmortem-writer',act:6,pillar:'Management',name:'Blameless Postmortem Writer',
   q:'Can the same facts become a postmortem the team will actually read, without naming anyone?',
   headline:'INC-2026-0142, Sev2, 46 minutes, 12% of checkout requests timed out',
   chips:[['Sev2','severity','critical'],['46 min','duration','high'],['12%','requests timed out','high'],['Resolved','status','good']],
-  report:'incident-response/blameless-postmortem-writer/sample-report/postmortem-checkout-latency-incident-20260709-190337.html',
-  src:'incident-response/blameless-postmortem-writer',star:true},
+  report:'management/blameless-postmortem-writer/sample-report/postmortem-checkout-latency-incident-20260709-190337.html',
+  src:'management/blameless-postmortem-writer',star:true},
 
- {id:'recurring-incident-patterns',act:6,pillar:'Incident response',name:'Recurring Incident Patterns',
+ {id:'recurring-incident-patterns',act:6,pillar:'Management',name:'Recurring Incident Patterns',
   q:'Is this a one off, or have we been paged for the same thing all month?',
   headline:'19 incidents in 30 days, 3 repeat offenders',
   chips:[['19','incidents in 30d','high'],['3','repeat offenders','critical'],['4','resources affected','medium']],
-  report:'incident-response/recurring-incident-patterns/sample-report/recurring-incident-patterns-report.html',
-  src:'incident-response/recurring-incident-patterns'},
+  report:'management/recurring-incident-patterns/sample-report/recurring-incident-patterns-report.html',
+  src:'management/recurring-incident-patterns'},
 
- {id:'observability-coverage-gap',act:7,pillar:'Observability',name:'Observability Coverage Gaps',
+ {id:'observability-coverage-gap',act:7,pillar:'Management',name:'Observability Coverage Gaps',
   q:'Which resources would fail silently, because nothing is logging them and nothing would page us?',
   headline:'58 of 312 resources have a gap, 40 have no alert at all',
   chips:[['58','with gaps','critical'],['31','no diagnostics','high'],['40','no alerts','critical'],['312','scanned','low']],
-  report:'observability/observability-coverage-gap/sample-report/observability-coverage-gap.html',
-  src:'observability/observability-coverage-gap',star:true},
+  report:'management/observability-coverage-gap/sample-report/observability-coverage-gap.html',
+  src:'management/observability-coverage-gap',star:true},
 
- {id:'alert-hygiene-review',act:7,pillar:'Observability',name:'Alert Hygiene Review',
+ {id:'alert-hygiene-review',act:7,pillar:'Management',name:'Alert Hygiene Review',
   q:'Of the alerts we do have, which ones are noise, which cry wolf, and which are silently switched off?',
   headline:'96 rules reviewed, 15 are noisy, cry wolf, or disabled',
   chips:[['96','rules reviewed','low'],['6','noisy','high'],['4','cry wolf','medium'],['5','silently disabled','critical']],
-  report:'observability/alert-hygiene-review/sample-report/alert-hygiene-review-7d.html',
-  src:'observability/alert-hygiene-review',star:true},
+  report:'management/alert-hygiene-review/sample-report/alert-hygiene-review-7d.html',
+  src:'management/alert-hygiene-review',star:true},
 
- {id:'finops-cost-optimizer',act:7,pillar:'Cost optimization',name:'FinOps Cost Optimizer',
+ {id:'finops-cost-optimizer',act:7,pillar:'Billing and Cost',name:'FinOps Cost Optimizer',
   q:'Where is the money going, what is idle, and what can we safely stop paying for?',
   headline:'$27,450 a month identified, 14.9% of analysed spend',
   chips:[['$184.2K','spend analysed','low'],['$27,450','monthly savings','good'],['14.9%','of spend','good'],['5','termination candidates','medium']],
-  report:'finops-cost-optimizer/sample-report/finops-report-20260709-190337.html',
-  src:'finops-cost-optimizer',star:true},
+  report:'billing-cost/finops-cost-optimizer/sample-report/finops-report-20260709-190337.html',
+  src:'billing-cost/finops-cost-optimizer',star:true},
 
- {id:'azure-arch',act:0,pillar:'Architecture',name:'Azure Architecture Generator',
+ {id:'azure-arch',act:0,pillar:'Resource Organization',name:'Azure Architecture Generator',
   q:'From a VM inventory, what should the target landing zone look like and roughly what will it cost?',
   headline:'draw.io diagram, Excel cost workbook, CSV and JSON metadata',
   chips:[['Design','not a review','info'],['draw.io','MCP connector','low']],
-  report:'',src:'architecture/azure-arch'}
+  report:'',src:'resource-organization/azure-arch'}
 ];
 
 var ACTS = [

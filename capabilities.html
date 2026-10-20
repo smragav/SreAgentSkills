@@ -177,7 +177,7 @@ footer{margin-top:36px;padding-top:18px;border-top:1px solid var(--border);color
   </div>
 
   <div class='cards'>
-    <div class='card'><div class='card-label'>Skills</div><div class='card-value'>22</div><div class='card-sub'>across 9 pillars</div></div>
+    <div class='card'><div class='card-label'>Skills</div><div class='card-value'>22</div><div class='card-sub'>across 8 categories</div></div>
     <div class='card'><div class='card-label'>Checks catalogs</div><div class='card-value'>18</div><div class='card-sub'>markdown you can edit</div></div>
     <div class='card'><div class='card-label'>Roles required</div><div class='card-value' style='color:var(--good)'>1</div><div class='card-sub'>Reader, nothing else</div></div>
     <div class='card'><div class='card-label'>Write permissions</div><div class='card-value' style='color:var(--good)'>0</div><div class='card-sub'>no write tool exists</div></div>
@@ -198,7 +198,7 @@ footer{margin-top:36px;padding-top:18px;border-top:1px solid var(--border);color
     <div class='group-title'>Skill by skill</div>
     <p class='group-sub'>Each row expands into four things: the named checks it runs with the severity each carries, the Azure data sources it reads, the agent tools it attaches, and the closest native Azure equivalent with an honest note on the difference. Every check listed here comes from a <span class='tag'>references/checks-catalog.md</span> file in the repository. Change a threshold, add a check, or delete one that does not apply to you.</p>
     <div class='controls'>
-      <select id='fPillar' onchange='filterSkills()'><option value=''>All pillars</option></select>
+      <select id='fPillar' onchange='filterSkills()'><option value=''>All categories</option></select>
       <input class='filter' id='fText' onkeyup='filterSkills()' placeholder='Filter by skill, check, API, or native tool. Try "Key Vault", "Activity Log", or "Advisor"'>
       <button class='btn' onclick='expandAll(true)'>Expand all</button>
       <button class='btn' onclick='expandAll(false)'>Collapse all</button>
@@ -269,7 +269,7 @@ footer{margin-top:36px;padding-top:18px;border-top:1px solid var(--border);color
 <script>
 /* ------------------------------------------------------------------ data */
 var SKILLS = [
-{pillar:'Well-Architected',name:'Well-Architected Review',src:'well-architected/well-architected-review',
+{pillar:'Management',name:'Well-Architected Review',src:'management/well-architected-review',
  one:'Scores all five Well-Architected pillars in one run, from what is actually deployed.',
  counts:'13 checks',
  checks:[
@@ -291,9 +291,9 @@ var SKILLS = [
  method:'Weighted average of pass ratios per check. Severity weights Critical 4, High 3, Medium 2, Low 1, rolled into a score of 0 to 100 per pillar.',
  native:'Well-Architected Review on Microsoft Assessments, Azure Advisor',
  delta:'The Microsoft assessment is a questionnaire. A person answers it, and two people answer it differently. This scores the same five pillars from Resource Graph facts, so the number is reproducible and the evidence row sits under it. Advisor lists recommendations without ever rolling them into a pillar score.',
- report:'well-architected/well-architected-review/sample-report/well-architected-review-scorecard.html'},
+ report:'management/well-architected-review/sample-report/well-architected-review-scorecard.html'},
 
-{pillar:'Reliability',name:'Reliability Posture Review',src:'reliability-resilience/reliability-posture-review',
+{pillar:'Management',name:'Reliability Posture Review',src:'management/reliability-posture-review',
  one:'Finds the single points of failure that decide whether you survive a zone or region outage.',
  counts:'9 checks',
  checks:[
@@ -311,9 +311,9 @@ var SKILLS = [
  method:'Each finding is scored by blast radius and likelihood rather than by how hard it is to fix, so an easy fix on a critical path still ranks first.',
  native:'Azure Advisor (Reliability), Azure Resiliency review',
  delta:'Advisor covers several of these and covers them well. What it will not do is give you one ranked scorecard of every redundancy gap across three subscriptions, with the Resource Graph query behind each row, in a file you can attach to a design review. It also has no notion of your severity: you cannot tell Advisor that a single instance virtual machine carrying checkout matters more than one carrying a build agent.',
- report:'reliability-resilience/reliability-posture-review/sample-report/reliability-posture-review-scorecard.html'},
+ report:'management/reliability-posture-review/sample-report/reliability-posture-review-scorecard.html'},
 
-{pillar:'Reliability',name:'Quota and Limit Watch',src:'reliability-resilience/quota-limit-watch',
+{pillar:'Resource Organization',name:'Quota and Limit Watch',src:'resource-organization/quota-limit-watch',
  one:'Tells you which counters will make the next deployment or scale out fail.',
  counts:'3 counter families',
  checks:[
@@ -328,9 +328,9 @@ var SKILLS = [
  method:'Discovers which regions the estate actually occupies from Resource Graph first, then reads only those regional usage endpoints, so nothing is missed and nothing irrelevant is reported.',
  native:'Quotas blade in the portal, Azure Support quota requests',
  delta:'The portal quota blade is per subscription and per region, so checking three subscriptions across four regions is twelve navigations and no record of the result. This is one pass over exactly the regions you occupy, ranked by how close to the wall each counter is, in one page. Quota exhaustion is one of the most common causes of a failed change window and there is no native report that fronts it.',
- report:'reliability-resilience/quota-limit-watch/sample-report/quota-limit-watch.html'},
+ report:'resource-organization/quota-limit-watch/sample-report/quota-limit-watch.html'},
 
-{pillar:'Observability',name:'Observability Coverage Gaps',src:'observability/observability-coverage-gap',
+{pillar:'Management',name:'Observability Coverage Gaps',src:'management/observability-coverage-gap',
  one:'Finds the resources that would fail silently because nothing logs them and nothing would page anyone.',
  counts:'4 checks',
  checks:[
@@ -343,9 +343,9 @@ var SKILLS = [
  method:'Builds the set of resources covered by an existing metric alert from the alert scopes, then subtracts it from a curated list of resource types that matter, which is how a gap gets proven rather than assumed.',
  native:'Azure Monitor, Azure Policy built in initiatives for diagnostic settings',
  delta:'Azure Monitor shows you what is monitored. There is no native view that inverts it and shows you what is not. Policy can enforce diagnostic settings going forward, but it will not tell you today which 58 of your 312 resources are blind, or which subscription has no action group so its alerts route nowhere at all.',
- report:'observability/observability-coverage-gap/sample-report/observability-coverage-gap.html'},
+ report:'management/observability-coverage-gap/sample-report/observability-coverage-gap.html'},
 
-{pillar:'Observability',name:'Alert Hygiene Review',src:'observability/alert-hygiene-review',
+{pillar:'Management',name:'Alert Hygiene Review',src:'management/alert-hygiene-review',
  one:'Grades your alert rules instead of your alerts. Noisy, cry wolf, ignored, or silently switched off.',
  counts:'4 signals',
  checks:[
@@ -358,9 +358,9 @@ var SKILLS = [
  method:'Aggregates fired alerts by rule over 1, 7, or 30 days, then computes fire count, auto resolved share, and unacknowledged share per rule, and classifies each against the thresholds in the catalog.',
  native:'Azure Monitor alerts blade',
  delta:'This is the clearest gap in the native tooling. Azure Monitor shows you a list of alerts. It has no view that grades the rules themselves. Nothing in the portal says this rule fired forty times and nobody acknowledged one of them, this Sev1 resolves itself in ninety seconds so it is not a Sev1, and these five rules are switched off with no record of why. Alert fatigue is a rule design problem and this is the report that fronts it.',
- report:'observability/alert-hygiene-review/sample-report/alert-hygiene-review-7d.html'},
+ report:'management/alert-hygiene-review/sample-report/alert-hygiene-review-7d.html'},
 
-{pillar:'Incident response',name:'Incident Triage and RCA',src:'incident-response/incident-triage-rca',
+{pillar:'Management',name:'Incident Triage and RCA',src:'management/incident-triage-rca',
  one:'Builds the incident timeline from health, changes, and neighbours, and reasons to a probable cause with a stated confidence.',
  counts:'3 evidence sources',
  checks:[
@@ -373,9 +373,9 @@ var SKILLS = [
  method:'Correlation is not proof, and the skill is built around saying so. Every hypothesis is tied to timeline evidence and carries a confidence band that is separate from severity, so a lead never reads like a conclusion.',
  native:'Azure Resource Health blade, Activity Log blade, Azure Monitor',
  delta:'All three inputs exist natively, in three separate blades, with no join between them. Nothing in the portal lines a health degradation up against the change that landed twenty minutes earlier on the same resource group and ranks the candidates. Doing that by hand at two in the morning is exactly the work that goes badly, and it is the single strongest demo moment in the suite.',
- report:'incident-response/incident-triage-rca/sample-report/incident-report-vm-payments-01.html'},
+ report:'management/incident-triage-rca/sample-report/incident-report-vm-payments-01.html'},
 
-{pillar:'Incident response',name:'Blameless Postmortem Writer',src:'incident-response/blameless-postmortem-writer',
+{pillar:'Management',name:'Blameless Postmortem Writer',src:'management/blameless-postmortem-writer',
  one:'Turns incident facts into a postmortem document about systems and conditions, never about individuals.',
  counts:'7 sections',
  checks:[
@@ -391,9 +391,9 @@ var SKILLS = [
  method:'A writing guide enforces blameless language, and any fact nobody knows becomes an action item to find out rather than a guess in the document.',
  native:'none in Azure',
  delta:'There is no Azure service that writes a postmortem. Teams do this in a wiki template, inconsistently, days later, often never. The value here is not the rendering, it is that the same evidence that drove triage flows into the document, so the timeline in the postmortem is the timeline that actually happened rather than the one somebody remembered on Monday.',
- report:'incident-response/blameless-postmortem-writer/sample-report/postmortem-checkout-latency-incident-20260709-190337.html'},
+ report:'management/blameless-postmortem-writer/sample-report/postmortem-checkout-latency-incident-20260709-190337.html'},
 
-{pillar:'Incident response',name:'Recurring Incident Patterns',src:'incident-response/recurring-incident-patterns',
+{pillar:'Management',name:'Recurring Incident Patterns',src:'management/recurring-incident-patterns',
  one:'Ranks the repeat offenders, so reliability investment goes where the pages actually come from.',
  counts:'3 severity bands',
  checks:[
@@ -406,9 +406,9 @@ var SKILLS = [
  method:'Joins two different incident signals, fired alerts and platform reported health degradations, and aggregates both by resource over 30 days by default.',
  native:'Azure Monitor alert history, an ITSM tool',
  delta:'Azure Monitor can show you alert history, but it does not join it to Resource Health degradations, and it does not aggregate by resource across a month to name the three things that generate most of your pages. Your ITSM tool has the ticket count but not the platform signal. This is the join, and it is the report that turns a reliability budget conversation from opinion into a ranked list.',
- report:'incident-response/recurring-incident-patterns/sample-report/recurring-incident-patterns-report.html'},
+ report:'management/recurring-incident-patterns/sample-report/recurring-incident-patterns-report.html'},
 
-{pillar:'Governance',name:'Certificate and Secret Expiry',src:'governance/certificate-secret-expiry',
+{pillar:'Security',name:'Certificate and Secret Expiry',src:'security/certificate-secret-expiry',
  one:'One expiry horizon across Key Vault, App Service, and Entra application credentials.',
  counts:'4 sources',
  checks:[
@@ -425,9 +425,9 @@ var SKILLS = [
  method:'Key Vault reads need Key Vault Reader or a data plane list permission, and Graph needs a directory read. Where either is denied the item is recorded as not assessed rather than quietly dropped.',
  native:'Key Vault near expiry events via Event Grid, Entra credential expiry notifications',
  delta:'Native expiry notification is per vault and per application, has to be wired up in advance, and sends you an event rather than a picture. Nobody wires it up for every vault. This is one ranked list of everything expiring in the next sixty days across three different systems that do not otherwise talk to each other, including the app registration credentials that are the most commonly forgotten of the three.',
- report:'governance/certificate-secret-expiry/sample-report/certificate-secret-expiry-60d.html'},
+ report:'security/certificate-secret-expiry/sample-report/certificate-secret-expiry-60d.html'},
 
-{pillar:'Governance',name:'Deprecation and Retirement Tracker',src:'governance/deprecation-retirement-tracker',
+{pillar:'Resource Organization',name:'Deprecation and Retirement Tracker',src:'resource-organization/deprecation-retirement-tracker',
  one:'Which of your resources are running on something Microsoft is retiring, ranked by deadline.',
  counts:'5 categories',
  checks:[
@@ -441,7 +441,7 @@ var SKILLS = [
  method:'Ships a built in end of life list so it can rank today, and its own catalog instructs you to corroborate the specific dates against Service Health before committing to one, because retirement dates move.',
  native:'Azure Service Health planned retirements, Azure Advisor (Operational Excellence)',
  delta:'Service Health is the authority on the date and this skill defers to it. What Service Health does not do is invert the question. It tells you a service is retiring; it does not hand you the ranked list of which of your resources are affected, sorted by deadline, alongside the end of life runtimes and classic resources it does not track at all. Advisor catches some of the same items but not as one deadline ordered plan.',
- report:'governance/deprecation-retirement-tracker/sample-report/deprecation-retirement-tracker.html'},
+ report:'resource-organization/deprecation-retirement-tracker/sample-report/deprecation-retirement-tracker.html'},
 
 {pillar:'Governance',name:'Tag Governance Compliance',src:'governance/tag-governance-compliance',
  one:'Measures the estate against your required tag standard, so chargeback and ownership actually work.',
@@ -458,7 +458,7 @@ var SKILLS = [
  delta:'Azure Policy is the better tool here and this skill says so in its own catalog. Policy is the durable fix because a one time tagging pass drifts. What Policy does not give you is the readable state of play before you write the definitions, ranked so that a missing owner tag outranks a missing cost centre, with your organisation tag names rather than the ones in the built in definition. Use this to decide what to enforce, then enforce it with Policy.',
  report:'governance/tag-governance-compliance/sample-report/tag-governance-compliance.html'},
 
-{pillar:'Governance',name:'SQL CMDB Inventory',src:'governance/sql-cmdb-inventory',
+{pillar:'Resource Organization',name:'SQL CMDB Inventory',src:'resource-organization/sql-cmdb-inventory',
  one:'One inventory row per SQL resource across four different Azure surfaces, enriched with Defender finding counts.',
  counts:'4 SQL surfaces',
  checks:[
@@ -475,7 +475,7 @@ var SKILLS = [
  delta:'Defender for Cloud has an inventory and it is good, but it is a security inventory and it lives in the portal. The four SQL surfaces here sit under four different resource providers, which is why most estates cannot answer how many SQL instances do we have. This produces the single joined table, with Defender counts as columns rather than as a separate blade, on a schedule, into a file your CMDB can ingest.',
  report:''},
 
-{pillar:'Security',name:'Network Exposure Review',src:'security/network-exposure-review',
+{pillar:'Network',name:'Network Exposure Review',src:'network/network-exposure-review',
  one:'What is reachable from the internet right now, including the storage and PaaS endpoints people forget.',
  counts:'4 checks',
  checks:[
@@ -490,9 +490,9 @@ var SKILLS = [
  method:'Expands every inbound rule on every network security group and matches sources of asterisk, Internet, and 0.0.0.0/0, then classifies by destination port so a management port never lands in the same band as a web port.',
  native:'Microsoft Defender for Cloud, Azure Advisor (Security), Network Watcher',
  delta:'Defender for Cloud does this and does it more deeply, and if a customer has Defender enabled everywhere, say so. Two differences remain. First, this needs no onboarding and no per resource plan billing, so it works on a subscription somebody spun up last week. Second, it produces one portable file for a specific scope, which is what a change gate or an external auditor actually wants, rather than a portal view behind a login.',
- report:'security/network-exposure-review/sample-report/network-exposure-review-report.html'},
+ report:'network/network-exposure-review/sample-report/network-exposure-review-report.html'},
 
-{pillar:'Security',name:'Identity and Access Hygiene',src:'security/identity-access-hygiene',
+{pillar:'Identity and Access',name:'Identity and Access Hygiene',src:'identity-access/identity-access-hygiene',
  one:'Who and what holds privilege today, including the non human principals and the classic administrators.',
  counts:'7 signals',
  checks:[
@@ -508,9 +508,9 @@ var SKILLS = [
  method:'Filters to four privileged role definition IDs rather than reading every assignment, which keeps the report about blast radius. Without the directory read it still works and shows principal ID and type.',
  native:'Microsoft Entra PIM, Entra access reviews, Defender for Cloud identity recommendations',
  delta:'PIM and access reviews are the correct long term control and this skill points at them as the fix. Both need configuring, both carry a licence, and neither answers the question you want answered in the first five minutes: who holds Owner on this subscription right now, which of those are service principals rather than people, and are the classic administrators still there. That is a Reader only read and this is the report that does it.',
- report:'security/identity-access-hygiene/sample-report/identity-access-hygiene-report.html'},
+ report:'identity-access/identity-access-hygiene/sample-report/identity-access-hygiene-report.html'},
 
-{pillar:'Security',name:'Flow Log Firewall Advisor',src:'security/flowlog-firewall-advisor',
+{pillar:'Network',name:'Flow Log Firewall Advisor',src:'network/flowlog-firewall-advisor',
  one:'Turns what a virtual network actually did into proposed Azure Firewall rules, with the evidence behind each one.',
  counts:'5 severity bands',
  checks:[
@@ -525,9 +525,9 @@ var SKILLS = [
  method:'Runs in three stages: discover the flow log resources and their workspaces, validate that the window actually has fresh data, then reconstruct connections and rank them. Blocked connections are never promoted into a rule.',
  native:'Network Watcher, Traffic Analytics, Azure Firewall policy analytics',
  delta:'Traffic Analytics shows you the traffic. It stops there. It does not convert observed flows into proposed firewall rules, it does not exclude what was already denied so you avoid codifying an attack into an allow rule, it does not tell you the resulting rule set fits inside the 20,000 combination policy budget, and it does not rank the proposals so a management port crossing a trust boundary is reviewed before a web port. Moving a VNet behind Azure Firewall is usually weeks of guesswork, and this is the evidence for it.',
- report:'security/flowlog-firewall-advisor/sample-report/flowlog-firewall-advisor-report.html'},
+ report:'network/flowlog-firewall-advisor/sample-report/flowlog-firewall-advisor-report.html'},
 
-{pillar:'Workload health',name:'AKS Reliability Review',src:'workload-health/aks-reliability-review',
+{pillar:'Management',name:'AKS Reliability Review',src:'management/aks-reliability-review',
  one:'Ten reliability and operational checks per AKS cluster, scored across the fleet.',
  counts:'10 checks',
  checks:[
@@ -546,9 +546,9 @@ var SKILLS = [
  method:'Reads cluster and node pool configuration in one Resource Graph pass across every accessible subscription, then reports a fleet wide best practice pass rate alongside the per cluster findings.',
  native:'Azure Advisor (AKS recommendations), AKS diagnostics, Defender for Containers',
  delta:'Advisor and AKS diagnostics both surface a subset of these, one cluster at a time. Neither gives you a fleet view. If you run six clusters, the question is which of the six is worst and what is the pass rate across all of them, and that is a fleet question the portal does not answer. The checks also cover operational settings such as auto upgrade channel and system node pool isolation that Advisor does not raise at all.',
- report:'workload-health/aks-reliability-review/sample-report/aks-reliability-review.html'},
+ report:'management/aks-reliability-review/sample-report/aks-reliability-review.html'},
 
-{pillar:'Workload health',name:'Data Platform Review',src:'workload-health/data-platform-review',
+{pillar:'Management',name:'Data Platform Review',src:'management/data-platform-review',
  one:'Redundancy, backup, and network posture across four database engines in one table.',
  counts:'11 checks',
  checks:[
@@ -568,9 +568,9 @@ var SKILLS = [
  method:'Normalises four engines into one findings table with an engine column, so a data platform owner reads one page rather than four different portal experiences.',
  native:'Azure Advisor, per service portal blades, Azure Backup Center',
  delta:'Every one of these settings is visible in its own service blade, which is precisely the problem. Four engines means four consoles and four mental models, and nobody checks all of them. The one number that matters, what share of our databases survive losing a region, does not exist anywhere natively. It does here, and geo redundant backup on flexible servers is set at create time, so finding it late is expensive.',
- report:'workload-health/data-platform-review/sample-report/data-platform-review.html'},
+ report:'management/data-platform-review/sample-report/data-platform-review.html'},
 
-{pillar:'Workload health',name:'App Service and Container Apps Health',src:'workload-health/appservice-containerapps-health',
+{pillar:'Management',name:'App Service and Container Apps Health',src:'management/appservice-containerapps-health',
  one:'Scaling, health probes, and transport security across the whole web tier.',
  counts:'9 checks',
  checks:[
@@ -588,9 +588,9 @@ var SKILLS = [
  method:'Treats App Service sites, App Service plans, and Container Apps as three categories in one report, because the tier problem lives on the plan while the probe problem lives on the site.',
  native:'App Service diagnostics, Azure Advisor, Defender for App Service',
  delta:'App Service diagnostics is excellent and it is per app. At forty one apps nobody opens forty one blades. The settings that cause the most avoidable incidents here, no health check path and a single replica cap, are quiet defaults rather than errors, so nothing ever surfaces them until traffic arrives. This is the estate wide sweep that finds them beforehand.',
- report:'workload-health/appservice-containerapps-health/sample-report/appservice-containerapps-health.html'},
+ report:'management/appservice-containerapps-health/sample-report/appservice-containerapps-health.html'},
 
-{pillar:'Operational excellence',name:'Change Audit',src:'operational-excellence/change-audit',
+{pillar:'Management',name:'Change Audit',src:'management/change-audit',
  one:'What changed in the last seven days, and which change landed just before something degraded.',
  counts:'3 signals',
  checks:[
@@ -603,9 +603,9 @@ var SKILLS = [
  method:'Reads both Activity Log categories in one pass and joins them on resource and time, then reports the change to degradation link as a lead rather than a cause.',
  native:'Activity Log blade, Change Analysis, Azure Monitor workbooks',
  delta:'The Activity Log has everything needed and joins none of it. Azure Change Analysis is closer and is genuinely useful, but it is oriented around a single resource you already suspect. This runs across subscriptions without a suspect, and answers the question that starts most incident reviews, which is simply what changed this week and did any of it precede a problem. It is also the report that makes the change advisory board conversation evidence based.',
- report:'operational-excellence/change-audit/sample-report/change-audit-report.html'},
+ report:'management/change-audit/sample-report/change-audit-report.html'},
 
-{pillar:'Operational excellence',name:'Pre-Change Readiness',src:'operational-excellence/pre-change-readiness',
+{pillar:'Platform Automation',name:'Pre-Change Readiness',src:'platform-automation/pre-change-readiness',
  one:'A go, caution, or no-go verdict per category for one target scope, before the change window opens.',
  counts:'8 checks in 3 categories',
  checks:[
@@ -623,9 +623,9 @@ var SKILLS = [
  method:'Everything is scoped to one subscription and an optional resource group, so the verdict is about the thing you are changing rather than about the estate.',
  native:'none in Azure',
  delta:'Azure has no readiness gate. There is no service that takes a target scope and returns go or no-go before a deployment. Teams either check nothing, or check by memory, or maintain a spreadsheet that goes stale. This is the same underlying checks as the reliability and exposure skills, narrowed to one scope and reduced to a verdict a change manager can act on, in a file that attaches to the change record.',
- report:'operational-excellence/pre-change-readiness/sample-report/pre-change-readiness-report.html'},
+ report:'platform-automation/pre-change-readiness/sample-report/pre-change-readiness-report.html'},
 
-{pillar:'Cost optimization',name:'FinOps Cost Optimizer',src:'finops-cost-optimizer',
+{pillar:'Billing and Cost',name:'FinOps Cost Optimizer',src:'billing-cost/finops-cost-optimizer',
  one:'Seven waste dimensions, ranked by saving, with a confidence band and a copyable delete command per candidate.',
  counts:'7 dimensions',
  checks:[
@@ -641,9 +641,9 @@ var SKILLS = [
  method:'Every termination candidate carries a confidence score that is deliberately lowered by disaster recovery, shared, and hybrid naming patterns, so the report never proposes deleting something that looks like a standby.',
  native:'Azure Advisor (Cost), Cost Management and Billing, Azure Carbon Optimization',
  delta:'This one is explicit about the overlap. Advisor is the baseline, it is read first, and its savings are reconciled so nothing is double counted. What Advisor does not do is score whether an orphan is safe to delete. It will tell you a disk is unattached; it will not weigh the fact that the disk is named with a disaster recovery convention. It also does not cover several dimensions here at all, notably Log Analytics retention, storage lifecycle policies, and non production out of hours scheduling, and it never hands you the delete command with the evidence next to it.',
- report:'finops-cost-optimizer/sample-report/finops-report-20260709-190337.html'},
+ report:'billing-cost/finops-cost-optimizer/sample-report/finops-report-20260709-190337.html'},
 
-{pillar:'Architecture',name:'Azure Architecture Generator',src:'architecture/azure-arch',
+{pillar:'Resource Organization',name:'Azure Architecture Generator',src:'resource-organization/azure-arch',
  one:'A first pass landing zone design and rough order cost estimate from a virtual machine inventory.',
  counts:'design generator',
  checks:[

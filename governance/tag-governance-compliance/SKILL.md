@@ -39,6 +39,10 @@ The scan tool (tools/tag_compliance.py) and the shared report renderer (tools/re
 1. Pipe the scan into the renderer: python tools/tag_compliance.py | python tools/report_render.py with RunInTerminal. It writes the self contained HTML report and returns the path. Store it with SaveFileToBlob for a link.
 2. Present the report, then a short inline summary: compliance percent, resources missing an owner tag, the most common missing tag, and the top subscriptions by gap.
 
+## Scenario coverage
+
+This skill also answers 8 customer scenarios in the Governance category (naming and tagging, policy authoring and lookup, compliance state, effective policies, exemptions, remediation, assignment assessment). Open references/scenarios.md when the ask matches one of them: it holds the sample prompt, the run mode, and whether the skill covers it with built in checks or a guided read only prompt.
+
 ## Expected output
 
 - Primary: a self contained HTML tag compliance report, covering compliance percent, missing tags by type, non compliance by subscription, and the full table naming the missing tags per resource.

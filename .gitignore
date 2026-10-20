@@ -6,4 +6,4 @@ __pycache__/
 # Captured live SRE Agent configuration from deploy.ps1 -Mode Capture.
 # These dumps contain the agent data plane endpoint and full skill/tool content,
 # and can include subscription or resource identifiers. Keep them local.
-finops-cost-optimizer/iac/captured/
+billing-cost/finops-cost-optimizer/iac/captured/

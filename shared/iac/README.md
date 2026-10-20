@@ -23,22 +23,22 @@ Dry run first to see exactly what would be sent:
 ```powershell
 cd shared/iac
 ./deploy-skill.ps1 -SubscriptionId <sub> -ResourceGroup rg-sre-agent -AgentName sreagent2 `
-  -SkillPath ../../governance/certificate-secret-expiry -DryRun
+  -SkillPath ../../security/certificate-secret-expiry -DryRun
 ```
 
 Then deploy:
 
 ```powershell
 ./deploy-skill.ps1 -SubscriptionId <sub> -ResourceGroup rg-sre-agent -AgentName sreagent2 `
-  -SkillPath ../../governance/certificate-secret-expiry
+  -SkillPath ../../security/certificate-secret-expiry
 ```
 
 `-SkillPath` is any pillar skill folder that contains a SKILL.md, for example:
 
-- ../../reliability-resilience/reliability-posture-review
-- ../../observability/observability-coverage-gap
-- ../../incident-response/incident-triage-rca
-- ../../workload-health/aks-reliability-review
+- ../../management/reliability-posture-review
+- ../../management/observability-coverage-gap
+- ../../management/incident-triage-rca
+- ../../management/aks-reliability-review
 
 ## Notes
 
