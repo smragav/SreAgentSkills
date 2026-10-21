@@ -1,39 +1,45 @@
 # Permissions and scope
 
-Every skill in this repository runs on the agent's default Reader access. None of them require an additional role assignment to start. When a specific read is denied, a skill may ask the user to grant temporary access, but it never assigns roles itself.
+## Confirm scope before collection
 
-## What this means
+Obtain the customer tenant, explicit subscription allowlist, resource groups or resource IDs, and UTC observation window. Existing access is not consent to inspect every accessible subscription. Confirm the discovered count against an expected inventory and list excluded, denied, truncated and unassessed scopes.
 
-- Coverage equals the agent's existing read scope. A skill analyzes only the subscriptions and resource groups this agent was given when it was created.
-- There is no tenant wide discovery. If a subscription is outside the agent's scope, the skill does not see it. To widen coverage, widen the agent's scope. That is a separate administrative action and is not a prerequisite for any skill.
+Some bundled tools enumerate the identity's accessible subscriptions. Run these only with an identity restricted to the approved scope. If that restriction cannot be established, use the related skill's scoped CLI collection instead. Do not describe a report filtered after collection as an access boundary.
 
-## Requesting temporary access, never assigning it
+## Azure SRE Agent permission levels
 
-A skill starts within the agent's existing read access. If a specific read is denied in some scope, the skill may ask the user to grant temporary, time bound access to that scope. It explains what it needs to read and why, then waits for the user to decide.
+The Azure SRE Agent Reader permission level is not synonymous with the Azure Reader role alone. The documented preconfigured roles include resource group Reader, Log Analytics Reader and Monitoring Reader, plus subscription Monitoring Contributor. An identity with no assigned scope has no access. Role assignments and available tools must be checked on the actual host.
 
-A skill never performs the role assignment itself. These skills have no write or role management tools and stay read only throughout. Granting access is always the user's action, done out of band. The user might activate an eligible role through PIM or add a temporary Reader assignment and remove it once the review is done. Elevation is the user granting temporary access, not a role assignment the skill makes.
+Read only behavior is an operating policy. It is not enforced merely by putting text in a skill, especially when a general terminal tool is available. Configure host authorization, approved scopes, tool restrictions and human approval independently.
 
-If the user declines, or does not grant access, the skill skips the denied check, records it in the report as not assessed because of insufficient access, and continues with everything it can read.
+## Match permissions to evidence
 
-## Reads used, all covered by Reader
+| Evidence | Permission considerations |
+| --- | --- |
+| ARM configuration and Resource Graph | Reader at each approved target scope; Resource Graph visibility does not prove complete inventory |
+| Azure Monitor metrics and alert configuration | Appropriate monitoring read actions at the target resource |
+| Log Analytics | Workspace or resource context log access; central destinations can be in another subscription |
+| Cost and budgets | Applicable Cost Management or billing scope access; billing scopes and Azure resource scopes differ |
+| Key Vault credential metadata | Data plane metadata permissions, such as Key Vault Reader under Azure RBAC, or the applicable list access policy; never read secret values |
+| Microsoft Graph directory objects | Separate approved directory permissions; sign-in reports require their own permissions, licensing and retained data |
+| Backup, Service Health and Resource Health | Applicable provider read permissions and product specific scope |
+| Policy state | Policy Insights read/query actions; remediation creation is a separate write |
 
-- Subscription enumeration: the list of subscriptions the identity can see.
-- Resource enumeration through Azure Resource Graph, which reads across every accessible subscription in one query.
-- Azure Monitor metrics, alert rules, action groups, and diagnostic settings.
-- Azure Resource Health and Service Health advisories.
-- Azure Advisor recommendations.
-- Resource provider read endpoints on Azure Resource Manager (for example Key Vault properties, backup vault items, and quota usage).
+Denied access is `Not assessed`, never zero findings, compliant, healthy or safe to delete. Request only the missing permission with a stated purpose and expiry. The skill does not grant roles, activate PIM or authorize its own elevation.
 
-Some data planes need their own read role rather than management plane Reader. Key Vault secret and certificate metadata, for example, is readable with a Key Vault Reader or a data plane list permission. Where a skill needs one of these, its checks catalog says so, and the skill treats a denial as not assessed rather than a failure.
+## Identity for Python tools
 
-## Identity setup for the Python tools
+Use the agent's intended managed identity, explicitly configured by the operator. Set `AZURE_CLIENT_ID` to the approved user assigned identity client ID when applicable. The shared identity helper documents its supported modes; local developer authentication must be an explicit choice, not fallback after a production error.
 
-The Python tools call Azure Resource Manager with the agent managed identity. Enable managed identity with the ARM scope on each tool in the Identity tab when you create it in the Builder.
+Never select the first of several attached identities, persist credentials, or log access tokens. Validate identity and scope with a known permitted resource and a known excluded scope before production use.
 
-An agent often carries a system assigned identity alongside the user assigned one, and the runtime resolves to the system assigned identity, which is commonly created with no role assignments at all. Resource Graph answers such a caller with HTTP 200 and a nearly empty result rather than an error, so a skill can report confidently on an estate it never saw. Measured on one agent: 15 resources visible where the user assigned identity saw 1140.
+## Writes and delivery
 
-`tools/agent_identity.py` removes that failure mode. It reads the agent resource named in its own token, finds the user assigned identity attached to it, and authenticates as that. Set AZURE_CLIENT_ID to override, and outside an agent the ambient credential is used unchanged.
+The default workflow collects evidence and creates local drafts. Resource moves, renewal, policy remediation, rollback, scheduling, support tickets, deployment and external uploads need separate explicit approval for the exact payload and destination. If the host lacks an approved write tool, provide the draft to an authorized operator instead.
 
-## The rule every skill keeps
+## Sources
 
-Read only throughout. A skill proposes recommendations and provides operator ready commands, but a human reviews and runs anything that changes or deletes a resource. The agent runs none of them.
+- [Azure SRE Agent permissions](https://learn.microsoft.com/azure/sre-agent/permissions).
+- [Azure SRE Agent skills and attached tools](https://learn.microsoft.com/azure/sre-agent/skills).
+- [Managed identity authentication for Python](https://learn.microsoft.com/azure/developer/python/sdk/authentication/system-assigned-managed-identity).
+- [Azure Monitor diagnostic destinations](https://learn.microsoft.com/azure/azure-monitor/essentials/diagnostic-settings).

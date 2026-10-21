@@ -15,13 +15,14 @@ limits panel. See any skill's references/report-layout.md for the input shape.
 Standard library only (html, json, os, sys, datetime). No third party packages.
 """
 
+import argparse
 import html
 import json
 import os
 import sys
 from datetime import datetime, timezone
 
-OUTPUT_DIR = "/mnt/data"
+OUTPUT_DIR = os.environ.get("SRE_REPORT_OUTPUT_DIR", "/mnt/data")
 
 # Severity and confidence render as CSS classes so the palette adapts to the
 # light and dark themes. The colours live in THEME_CSS as CSS variables.
@@ -127,6 +128,14 @@ def _normalise_columns(columns):
     return normalised
 
 
+def _sortable_header(label):
+    return (
+        "<th scope='col'><button type='button' class='sort-header' "
+        "onclick='sortTable(this.closest(\"th\"))' "
+        f"aria-label='Sort by {_esc(label)}'>{_esc(label)}</button></th>"
+    )
+
+
 def _findings_table(findings):
     rows = findings.get("rows", []) if findings else []
     if not rows:
@@ -143,7 +152,7 @@ def _findings_table(findings):
 
     has_command = any(row.get("_command") for row in rows)
     header_cells = "".join(
-        f"<th onclick='sortTable(this)'>{_esc(label)}</th>" for _, label in columns
+        _sortable_header(label) for _, label in columns
     )
     if has_command:
         header_cells += "<th>Command</th>"
@@ -181,18 +190,19 @@ def _findings_table(findings):
     if sev_present:
         options = "".join(f"<option value='{_esc(s)}'>{_esc(s)}</option>" for s in sev_present)
         sev_select = (
-            "<select id='findingsSev' onchange='filterFindings()'>"
+            "<select id='findingsSev' aria-label='Filter by severity' onchange='filterFindings()'>"
             f"<option value=''>All severities</option>{options}</select>"
         )
     return (
         f"<div class='group-title'>{_esc(title)}</div>"
         "<div class='controls'>"
         f"{sev_select}"
-        "<input class='filter' id='findingsText' onkeyup='filterFindings()' placeholder='Filter findings...'>"
+        "<input class='filter' id='findingsText' aria-label='Search findings' onkeyup='filterFindings()' placeholder='Filter findings...'>"
         "<span class='count' id='findings-count'></span>"
         "</div>"
+        "<div class='table-scroll' tabindex='0' role='region' aria-label='Findings table'>"
         f"<table id='findings' class='data'><thead><tr>{header_cells}</tr></thead>"
-        f"<tbody>{''.join(body)}</tbody></table>"
+        f"<tbody>{''.join(body)}</tbody></table></div>"
     )
 
 
@@ -208,7 +218,7 @@ def _candidates_table(candidates):
     if show_saving:
         head.append("Est. monthly")
     head += ["Reason", "Next step", "Command"]
-    header_cells = "".join(f"<th onclick='sortTable(this)'>{_esc(h)}</th>" for h in head)
+    header_cells = "".join(_sortable_header(h) for h in head)
 
     body = []
     for candidate in rows:
@@ -242,15 +252,16 @@ def _candidates_table(candidates):
     return (
         "<div class='group-title'>Action candidates</div>"
         "<div class='controls'>"
-        f"<select onchange=\"filterCandidates()\" id='candSub'><option value=''>All subscriptions</option>{sub_options}</select>"
-        "<select onchange=\"filterCandidates()\" id='candBand'>"
+        f"<select onchange=\"filterCandidates()\" id='candSub' aria-label='Candidate subscription'><option value=''>All subscriptions</option>{sub_options}</select>"
+        "<select onchange=\"filterCandidates()\" id='candBand' aria-label='Candidate confidence'>"
         "<option value=''>All confidence</option><option>Very high</option><option>High</option>"
         "<option>Medium</option><option>Low</option></select>"
-        "<input class='filter' onkeyup=\"filterCandidates()\" id='candText' placeholder='Search candidates...'>"
+        "<input class='filter' onkeyup=\"filterCandidates()\" id='candText' aria-label='Search candidates' placeholder='Search candidates...'>"
         "<span class='count' id='cand-count'></span>"
         "</div>"
+        "<div class='table-scroll' tabindex='0' role='region' aria-label='Action candidates table'>"
         f"<table id='candidates' class='data'><thead><tr>{header_cells}</tr></thead>"
-        f"<tbody>{''.join(body)}</tbody></table>"
+        f"<tbody>{''.join(body)}</tbody></table></div>"
     )
 
 
@@ -265,6 +276,9 @@ def _method_notes(notes):
 # canvas, and a full light and dark palette driven by CSS variables. Every skill
 # shares this one theme through document_shell, so all reports match.
 THEME_CSS = """
+.table-scroll{overflow-x:auto}
+.sort-header{background:none;border:0;color:inherit;font:inherit;font-weight:inherit;cursor:pointer;text-align:left}
+:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
 :root{
 --bg:#faf9f8;--surface:#ffffff;--surface-2:#f3f2f1;--surface-3:#faf9f8;
 --text:#201f1e;--text-2:#605e5c;--text-3:#8a8886;
@@ -277,7 +291,7 @@ THEME_CSS = """
 --code-bg:#f3f2f1;--code-text:#201f1e;--track:#c8c6c4;--track-on:#0078d4;
 color-scheme:light}
 html[data-theme='dark']{
---bg:#1b1a19;--surface:#252423;--surface-2:#323130;--surface-3:#2b2a29;
+--bg:#0d1117;--surface:#161b22;--surface-2:#21262d;--surface-3:#161b22;
 --text:#f3f2f1;--text-2:#c8c6c4;--text-3:#a19f9d;
 --border:#3b3a39;--border-2:#484644;
 --accent:#4db2ff;--accent-hover:#6cbcff;--accent-soft:#123047;
@@ -364,9 +378,9 @@ footer{margin-top:32px;color:var(--text-3);font-size:12px;text-align:center}
 # Set the theme before first paint so there is no flash of the wrong palette.
 THEME_INIT_JS = (
     "(function(){try{var s=localStorage.getItem('sre-theme');"
-    "if(s!=='dark'&&s!=='light'){s=(window.matchMedia&&window.matchMedia('(prefers-color-scheme:dark)').matches)?'dark':'light';}"
+    "if(s!=='dark'&&s!=='light'){s='dark';}"
     "document.documentElement.setAttribute('data-theme',s);}"
-    "catch(e){document.documentElement.setAttribute('data-theme','light');}})();"
+    "catch(e){document.documentElement.setAttribute('data-theme','dark');}})();"
 )
 
 # Light and dark toggle: updates the attribute, the switch state, and the label,
@@ -392,7 +406,10 @@ var c=document.getElementById('findings-count');if(c)c.textContent=shown+' of '+
 function filterCandidates(){var s=(document.getElementById('candSub')||{}).value||'',b=(document.getElementById('candBand')||{}).value||'',q=((document.getElementById('candText')||{}).value||'').toLowerCase(),el=document.getElementById('candidates');if(!el)return;var tb=el.tBodies[0],shown=0;
 Array.prototype.forEach.call(tb.rows,function(r){var ok=(!s||r.dataset.sub===s)&&(!b||r.dataset.band===b)&&r.innerText.toLowerCase().indexOf(q)>-1;r.style.display=ok?'':'none';if(ok)shown++;});
 var c=document.getElementById('cand-count');if(c)c.textContent=shown+' of '+tb.rows.length+' shown';}
-function copyCmd(btn){var c=btn.getAttribute('data-cmd');if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(c);}var o=btn.innerText;btn.innerText='Copied';setTimeout(function(){btn.innerText=o},1200);}
+async function copyCmd(btn){var c=btn.getAttribute('data-cmd'),o=btn.innerText;
+try{if(!navigator.clipboard||!navigator.clipboard.writeText)throw new Error('Clipboard access is unavailable');await navigator.clipboard.writeText(c);btn.innerText='Copied';}
+catch(e){btn.innerText='Copy failed';btn.setAttribute('aria-label','Copy failed: select and copy the command manually');}
+setTimeout(function(){btn.innerText=o},1600);}
 (function(){filterFindings();filterCandidates();})();
 """
 
@@ -427,7 +444,7 @@ def document_shell(
     """
     scripts = THEME_TOGGLE_JS + (TABLE_JS if include_table_js else "") + (extra_js or "")
     return (
-        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+        "<!doctype html><html lang='en' data-theme='dark'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         f"<title>{_esc(title)}</title>"
         f"<style>{THEME_CSS}{extra_css}</style>"
@@ -438,8 +455,26 @@ def document_shell(
     )
 
 
-def render_html(report_data):
+def _sources_section(sources):
+    items = []
+    for source in sources or []:
+        url = source.get("url", "")
+        title = _esc(source.get("title") or url)
+        if url.startswith("https://"):
+            items.append(f"<li><a href='{_esc(url)}' rel='noopener noreferrer'>{title}</a></li>")
+        else:
+            items.append(f"<li>{title}</li>")
+    if not items:
+        items.append("<li>Consult the skill's checks catalog for collection methods and Microsoft sources. "
+                     "Source verification was not supplied in this report.</li>")
+    return "<div class='group-title'>Sources</div><ul>" + "".join(items) + "</ul>"
+
+
+def render_html(report_data, include_identifiers=False):
     """Return the full HTML document string for a report_data dict."""
+    from sharing import sanitized_copy
+
+    report_data = sanitized_copy(report_data, include_identifiers=include_identifiers)
     meta = report_data.get("meta", {})
     meta_bits = []
     for label, key in (("Window", "window"), ("Scope", "scope"), ("Source", "source")):
@@ -452,23 +487,35 @@ def render_html(report_data):
 
     charts = "".join(_bar_chart(chart) for chart in report_data.get("charts", []))
     charts_block = f"<div class='group-title'>Overview</div>{charts}" if charts else ""
+    review = report_data["sharing_review"]
+    notice = (
+        "<div class='panel' role='note'><b>Draft: customer sharing review required.</b> "
+        f"Assessment completeness: {_esc(report_data.get('assessment_status', 'Not supplied'))}. "
+        f"Redactions: {review['redactions']}. "
+        + ("Customer identifiers were explicitly included. " if include_identifiers else
+           "Identifiers use aliases; aliased commands are not executable instructions. ")
+        + "Review free text, evidence, sources and the intended audience before delivery. "
+        "No resource changes or external uploads were performed by this renderer.</div>"
+    )
 
     body = (
         f"<h1>{_esc(report_data.get('title', 'SRE report'))}</h1>"
         f"<p class='subtitle'>{_esc(report_data.get('subtitle', ''))}</p>"
         f"<div class='meta'>{''.join(meta_bits)}</div>"
+        f"{notice}"
         f"{_summary_cards(report_data.get('summary_cards'))}"
         f"{charts_block}"
         f"{_findings_table(report_data.get('findings'))}"
         f"{_candidates_table(report_data.get('candidates'))}"
         f"{_method_notes(report_data.get('method_notes'))}"
+        f"{_sources_section(report_data.get('sources'))}"
         "<footer>Generated by an Azure SRE Agent skill. Read only. "
         "Recommendations and commands are proposals for a human to review and run.</footer>"
     )
     return document_shell(report_data.get("title", "SRE report"), body)
 
 
-def main(report_data: dict = None, filename: str = None) -> dict:
+def main(report_data: dict = None, filename: str = None, include_identifiers: bool = False) -> dict:
     """Render report_data to a self contained HTML file and return its path.
 
     report_data: the report object. When omitted, read JSON from standard input.
@@ -477,14 +524,20 @@ def main(report_data: dict = None, filename: str = None) -> dict:
     """
     if report_data is None:
         raw = sys.stdin.read()
-        report_data = json.loads(raw) if raw.strip() else {}
+        if not raw.strip():
+            raise ValueError("A report JSON object is required; no assessment was supplied.")
+        report_data = json.loads(raw)
+    if not isinstance(report_data, dict) or not report_data.get("title"):
+        raise ValueError("The report must be an object with a title.")
 
-    document = render_html(report_data)
+    document = render_html(report_data, include_identifiers=include_identifiers)
     if not filename:
         slug = "".join(c if c.isalnum() else "-" for c in report_data.get("title", "sre-report").lower())
         slug = "-".join(part for part in slug.split("-") if part) or "sre-report"
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-        filename = f"{slug}-{stamp}.html"
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        filename = f"{stamp}-{slug}.html"
+    if any(character in filename for character in ("/", "\\", "\x00")) or filename in (".", ".."):
+        raise ValueError("The report filename must be a simple local filename, not a path.")
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     path = os.path.join(OUTPUT_DIR, filename)
@@ -494,4 +547,9 @@ def main(report_data: dict = None, filename: str = None) -> dict:
 
 
 if __name__ == "__main__":
-    print(json.dumps(main()))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--include-identifiers", action="store_true",
+                        help="Keep identifiers for an explicitly approved customer audience; credentials are still redacted.")
+    parser.add_argument("--filename", help="Local output filename, without directory separators.")
+    args = parser.parse_args()
+    print(json.dumps(main(filename=args.filename, include_identifiers=args.include_identifiers)))

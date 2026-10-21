@@ -1,47 +1,58 @@
-# Shared deployment
+# Shared deployment client
 
-One parameterized data plane deploy script for every pillar skill, so the deploy client is not copied into each skill folder. See the repository README for the pillar layout, and the SRE Agent deployment notes for why the data plane is used rather than the control plane.
+For the full walkthrough, prerequisites, runtime configuration, portal alternative, test prompts and troubleshooting, start with [Install a skill in your Azure SRE Agent](../../README.md#install-a-skill-in-your-azure-sre-agent).
 
-## What deploy-skill.ps1 does
+## Run from the repository root
 
-Point it at a skill folder. It reads the name, description, and tools from that skill's SKILL.md frontmatter, bundles the skill's own references and tools together with the shared references and shared tools (report_render.py), and PUTs the skill to the agent data plane endpoint, the same surface the portal Builder uses.
-
-Files are bundled as additionalFiles with these relative paths, so the skill runs the same way it reads locally:
-
-- references/ from shared/references and the skill's references (the skill's file wins on a name clash).
-- tools/ from shared/tools and the skill's tools. Unit test files (test_*.py) are skipped.
-
-## Prerequisites
-
-- Azure CLI with an active `az login`.
-- Builder access on the target agent (the SRE Agent Administrator role). The agent must already exist.
-
-## Usage
-
-Dry run first to see exactly what would be sent:
+The following is a local packaging preview, not a deployment:
 
 ```powershell
-cd shared/iac
-./deploy-skill.ps1 -SubscriptionId <sub> -ResourceGroup rg-sre-agent -AgentName sreagent2 `
-  -SkillPath ../../governance/certificate-secret-expiry -DryRun
+.\shared\iac\deploy-skill.ps1 `
+  -SubscriptionId '<subscription-containing-the-agent>' `
+  -ResourceGroup '<resource-group-containing-the-agent>' `
+  -AgentName '<existing-agent-resource-name>' `
+  -SkillPath '.\management\slo-error-budget-analysis' `
+  -DryRun
 ```
 
-Then deploy:
+Replace all placeholders. After an authorized Azure CLI sign in and explicit approval of the destination and content, repeat without `-DryRun` to install. A matching skill name can update the existing definition. Save its previous content and files before an intentional update.
 
-```powershell
-./deploy-skill.ps1 -SubscriptionId <sub> -ResourceGroup rg-sre-agent -AgentName sreagent2 `
-  -SkillPath ../../governance/certificate-secret-expiry
-```
+## What the client does
 
-`-SkillPath` is any pillar skill folder that contains a SKILL.md, for example:
+[deploy-skill.ps1](./deploy-skill.ps1) reads the selected skill's name, description and tools from `SKILL.md`. It packages the procedural guidance and these supporting files:
 
-- ../../reliability-resilience/reliability-posture-review
-- ../../observability/observability-coverage-gap
-- ../../incident-response/incident-triage-rca
-- ../../workload-health/aks-reliability-review
+| Source | Deployed relative path |
+| --- | --- |
+| Immediate shared and skill reference files | `references/<filename>` |
+| Immediate shared and skill tool files | `tools/<filename>` |
+| Other immediate files in the skill root | `<filename>` |
 
-## Notes
+The skill's file wins if it has the same deployed path as a shared file. `SKILL.md` is sent as procedural guidance, not duplicated as an attachment. Python unit tests are excluded. The client does not recursively attach subdirectories, sample reports or optional configurations.
 
-- The control plane sub-resource API (Microsoft.App/agents/skills) is restricted to internal tenants in preview, so this script uses the data plane with a bearer token for the https://azuresre.dev audience.
-- Windows PowerShell 5.1 ConvertTo-Json is pathologically slow on large string payloads, so the script builds the JSON body with an explicit string escaper. PowerShell 7 also works.
-- The tools authenticate with the agent managed identity at run time. Enable managed identity with the ARM scope on each Python tool in the Builder Identity tab, and pin AZURE_CLIENT_ID when the agent carries more than one identity.
+With `-DryRun`, it prints the bundle and exits before authentication or network requests.
+
+Without `-DryRun`, it:
+
+1. Reads the existing `Microsoft.App/agents` resource with ARM API version `2025-05-01-preview` to resolve its endpoint.
+2. Obtains an Azure CLI access token for the `https://azuresre.dev` audience. Tokens must not be copied into documents or logs.
+3. Sends a `PUT` to `/api/v2/extendedAgent/skills/{name}` on that endpoint.
+4. Reads the skill back and prints the saved skill name, attached file count and tools.
+
+This is the library's client implementation, not a guarantee that the data plane API is available in every tenant or service version. If endpoint access is unavailable, use the documented Builder workflow with an authorized administrator. Do not assume a control plane limitation or weaken access controls to work around it.
+
+## What it does not do
+
+- Create an SRE Agent.
+- Grant installer or managed identity permissions.
+- Install Python packages, CLI extensions, Kubernetes contexts or connectors.
+- Set the remote execution environment's identity variables.
+- Validate a live investigation, schedule a task, remediate a resource or deliver a report.
+
+The local installer identity and runtime agent identity are different concerns. Follow [the runtime setup steps](../../README.md#5-configure-runtime-tools-identity-and-access) and [permissions guide](../references/permissions-and-scope.md) before operational use.
+
+## Sources
+
+- [Deployment client implementation](./deploy-skill.ps1), checked 2026-10-21.
+- [Microsoft: Skills in Azure SRE Agent](https://learn.microsoft.com/azure/sre-agent/skills), verified 2026-10-21.
+- [Microsoft: User roles](https://learn.microsoft.com/azure/sre-agent/user-roles), verified 2026-10-21.
+- [Microsoft: Agent permissions](https://learn.microsoft.com/azure/sre-agent/permissions), verified 2026-10-21.

@@ -23,11 +23,11 @@
 
 .EXAMPLE
   ./deploy-skill.ps1 -SubscriptionId <sub> -ResourceGroup rg-sre-agent -AgentName sreagent2 `
-    -SkillPath ../../governance/certificate-secret-expiry -DryRun
+    -SkillPath ../../security/certificate-secret-expiry -DryRun
 
 .EXAMPLE
   ./deploy-skill.ps1 -SubscriptionId <sub> -ResourceGroup rg-sre-agent -AgentName sreagent2 `
-    -SkillPath ../../reliability-resilience/reliability-posture-review
+    -SkillPath ../../management/reliability-posture-review
 #>
 [CmdletBinding()]
 param(
@@ -94,7 +94,7 @@ function Get-AdditionalFiles {
         }
     }
     # Skill files that live at the skill root, for flat skills that mirror their
-    # upstream source layout (for example azure-arch/generator-template.py). The
+    # layout (for example azure-arch/generator-template.py). The
     # filePath is the bare file name, matching how the source bundles them. The
     # SKILL.md is sent as skillContent, so it is not added here.
     foreach ($file in Get-ChildItem -Path $skillRoot -File) {
