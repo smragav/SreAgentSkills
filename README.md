@@ -136,7 +136,7 @@ Shared reference links in playbooks resolve in the deployed bundle. In the sourc
 Clone the repository, or download and extract its complete archive:
 
 ```powershell
-git clone https://github.com/smragav/SreAgentSkills.git sre-agent-skills
+git clone https://github.com/smragav/azure-sre-agent-skills.git sre-agent-skills
 Set-Location .\sre-agent-skills
 ```
 
