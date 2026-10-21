@@ -12,8 +12,10 @@ python tools/identity_access.py | python tools/report_render.py
 - meta: window is "Point in time", scope is the count of subscriptions scanned, source is "Azure role assignments".
 - summary_cards: privileged findings, service principals with high privilege, classic administrators, subscriptions scanned.
 - charts: findings by severity, and findings by role (Owner, User Access Administrator, Role Based Access Control Administrator, Contributor).
-- findings: columns principal, principal_type, role, scope, subscription, recommendation, severity. Each row carries a _band equal to its severity.
+- findings: columns principal, principal_type, assignment_id, role, scope, scope_kind, subscription, recommendation, severity. Full principal, role definition and assignment ids are retained, along with custom permission evidence. Subscription ids remain stable; display names are supplemental.
 - method_notes: the Owner sprawl threshold, the note that display names need a Microsoft Entra read, and any scope not assessed.
+- assessment_status: Complete, Partial or Not assessed for the declared configuration checks. Failed collections are Partial, and empty unknown scope is Not assessed.
+- sources: objects with title and url. Redundancy, inactivity, effective access and tenant sign ins are explicitly outside this analyzer.
 
 ## Sections the renderer produces
 
@@ -24,3 +26,7 @@ python tools/identity_access.py | python tools/report_render.py
 5. Method and limits.
 
 Owner sprawl, high privilege service principals, and classic administrators are the High severity items worth acting on first.
+
+## Sources
+
+- [Owned checks and source URLs](checks-catalog.md)

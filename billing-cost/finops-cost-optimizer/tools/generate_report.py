@@ -39,6 +39,7 @@ def _bootstrap_shared_tools():
 
 _bootstrap_shared_tools()
 from report_render import document_shell  # noqa: E402
+from sharing import sanitized_copy  # noqa: E402
 
 OUTPUT_DIR = "/mnt/data"
 
@@ -59,6 +60,8 @@ def _esc(value):
 
 
 def _money(value, currency):
+    if value is None:
+        return "Not reconciled"
     symbol = CURRENCY_SYMBOL.get((currency or "").upper())
     number = f"{float(value or 0.0):,.2f}"
     return f"{symbol}{number}" if symbol else f"{number} {currency}".strip()
@@ -120,19 +123,16 @@ def _candidate_chart(candidates):
 def _render_candidates(candidates, currency):
     if not candidates:
         return ""
-    total_saving = 0.0
     counts = {"Very high": 0, "High": 0, "Medium": 0, "Low": 0}
     for candidate in candidates:
         band = candidate.get("band") or _band_from_confidence(candidate.get("confidence"))
         candidate["band"] = band
         counts[band] = counts.get(band, 0) + 1
-        if not candidate.get("excluded"):
-            total_saving += float(candidate.get("monthly_saving", 0.0) or 0.0)
 
     cards = (
         "<div class='grid'>"
         f"<div class='card'><h3>Total candidates</h3><div class='num'>{len(candidates)}</div></div>"
-        f"<div class='card'><h3>Est. monthly savings*</h3><div class='num' style='color:var(--conf-very-high)'>{_money(total_saving, currency)}</div></div>"
+        "<div class='card'><h3>Candidate savings</h3><div class='num'>Individual estimates only</div></div>"
         f"<div class='card'><h3>Very high confidence</h3><div class='num'>{counts['Very high']}</div></div>"
         f"<div class='card'><h3>High confidence</h3><div class='num'>{counts['High']}</div></div>"
         f"<div class='card'><h3>Medium or low confidence</h3><div class='num'>{counts['Medium'] + counts['Low']}</div></div>"
@@ -140,10 +140,10 @@ def _render_candidates(candidates, currency):
     )
 
     note = (
-        "<div class='small' style='margin:8px 0 0'>*Lower bound estimate. Deallocated VMs show direct "
+        "<div class='small' style='margin:8px 0 0'>Estimates are not additive to recommendations and are not realized savings. Deallocated VMs show direct "
         "compute savings as 0 because compute is already stopped; their attached disks and public IPs may "
         "still bill and appear as their own candidates where detected. Resources that could not be priced "
-        "are marked Excluded and are not counted in the total.</div>"
+        "are marked Excluded.</div>"
     )
 
     chart = _candidate_chart(candidates)
@@ -157,13 +157,12 @@ def _render_candidates(candidates, currency):
 
     how = (
         "<div class='section'><h2>How to read the confidence score</h2>"
-        "<div class='note'>90 or above means the resource is unattached and old enough to look abandoned. "
-        "70 to 89 means likely safe but still worth a quick owner check. 50 to 69 means the signal is real "
-        "but recent or ambiguous. Below 50 means it likely belongs to DR or shared infrastructure and should "
-        "not be terminated without deeper validation.</div>"
-        "<div class='small' style='margin-top:10px'>Confidence is a conservative termination heuristic, not "
-        "an automatic delete recommendation. The agent never runs these commands. Each delete command is for "
-        "an operator to review and run.</div></div>"
+        "<div class='note'>Higher scores rank stronger evidence for owner review, never permission to delete. "
+        "Even an old unattached disk or snapshot can hold required recovery data. Names alone cannot prove "
+        "nonproduction, idleness or absence of dependencies.</div>"
+        "<div class='small' style='margin-top:10px'>Before any deletion, confirm owner approval, dependencies, "
+        "backup and recovery retention, locks, workload schedule and change approval. Delete commands are "
+        "destructive operator instructions, not read only checks. The agent never runs them.</div></div>"
     )
 
     subs = sorted({str(c.get("subscription", "")) for c in candidates if c.get("subscription")})
@@ -189,9 +188,7 @@ def _render_candidates(candidates, currency):
             str(candidate.get(key, ""))
             for key in ("resource", "resource_type", "subscription", "resource_group", "location", "reason")
         ).lower()
-        delete_command = candidate.get("delete_command") or (
-            f"az resource delete --ids '{candidate.get('resource_id', '')}'" if candidate.get("resource_id") else ""
-        )
+        delete_command = candidate.get("delete_command") or ""
         cmd_id = f"cmd-{index}"
         if delete_command:
             delete_cell = (
@@ -377,19 +374,49 @@ SCRIPT = r"""
 """
 
 
-def main(report_data: dict, report_title: str = "Azure FinOps Cost Optimization Report") -> dict:
+def _validated_totals(data):
+    """Reject mixed money and inconsistent baselines rather than silently sum."""
+    totals = data.get("totals", {})
+    currency = totals.get("currency")
+    records = [item for key in ("subscriptions", "resource_groups", "findings", "candidates") for item in data.get(key, [])]
+    if not currency or any(item.get("currency", currency) != currency for item in records):
+        raise ValueError("Generate a separate report per explicit currency; no conversion is performed.")
+    analyzed = float(totals.get("analyzed_spend", 0) or 0)
+    subscriptions = data.get("subscriptions", [])
+    if subscriptions:
+        baseline = sum(float(item.get("cost", 0) or 0) for item in subscriptions)
+        if abs(baseline - analyzed) > 0.01:
+            raise ValueError("Analyzed spend does not reconcile to the selected subscription baseline.")
+    savings = None
+    if totals.get("savings_reconciled") is True and data.get("reconciliation_notes"):
+        savings = float(totals.get("estimated_monthly_savings", 0) or 0)
+    return currency, analyzed, savings
+
+
+def main(report_data: dict, report_title: str = "Azure FinOps Cost Optimization Report", include_identifiers: bool = False) -> dict:
     """Render the HTML report and return its file link.
 
     report_data: see references/report-layout.md for the expected shape.
     """
     data = report_data or {}
-    totals = data.get("totals", {})
-    currency = totals.get("currency", "")
+    currency, analyzed, savings = _validated_totals(data)
+    data = sanitized_copy(data, include_identifiers=include_identifiers)
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
-    analyzed = float(totals.get("analyzed_spend", 0.0) or 0.0)
-    savings = float(totals.get("estimated_monthly_savings", 0.0) or 0.0)
-    pct = (savings / analyzed * 100.0) if analyzed else 0.0
+    window = int(data.get("window_days", 30) or 30)
+    if window <= 0:
+        raise ValueError("window_days must be positive.")
+    monthly_baseline = analyzed * 30 / window
+    pct = savings / monthly_baseline * 100 if monthly_baseline > 0 and savings is not None else None
+    assessment_status = data.get("assessment_status", "Partial")
+    if not data.get("subscriptions"):
+        assessment_status = "Not assessed"
+    elif savings is None or data.get("collection_failures"):
+        assessment_status = "Partial"
+    sources = data.get("sources") or [
+        {"title": "Cost query and pagination", "url": "https://learn.microsoft.com/javascript/api/@azure/arm-costmanagement/queryproperties"},
+        {"title": "Cost scope and access", "url": "https://learn.microsoft.com/azure/cost-management-billing/costs/assign-access-acm-data"},
+    ]
 
     findings = data.get("findings", [])
     candidates = data.get("candidates", [])
@@ -409,14 +436,14 @@ def main(report_data: dict, report_title: str = "Azure FinOps Cost Optimization 
         f"<h1>{_esc(report_title)}</h1>"
         f"<p class='subtitle'>Generated {generated}. Scope {_esc(data.get('generated_for', 'agent read scope'))}. "
         f"Window {int(data.get('window_days', 30) or 30)} days. Cost source {_esc(data.get('data_source', 'CostManagement'))}. "
-        "Accessible subscriptions only.</p></div>"
+        f"Accessible subscriptions only. Assessment: {_esc(assessment_status)}.</p></div>"
     )
 
     summary_cards = (
         "<div class='grid'>"
-        f"<div class='card'><h3>Analyzed spend (30 days)</h3><div class='num'>{_money(analyzed, currency)}</div></div>"
+        f"<div class='card'><h3>Analyzed spend ({window} days)</h3><div class='num'>{_money(analyzed, currency)}</div></div>"
         f"<div class='card'><h3>Est. monthly savings</h3><div class='num' style='color:var(--conf-very-high)'>{_money(savings, currency)}</div></div>"
-        f"<div class='card'><h3>Savings of spend</h3><div class='num'>{pct:.1f}%</div></div>"
+        f"<div class='card'><h3>Savings vs normalized 30 day spend</h3><div class='num'>{f'{pct:.1f}%' if pct is not None else 'Not reconciled'}</div></div>"
         f"<div class='card'><h3>Termination candidates</h3><div class='num'>{len(candidates)}</div></div>"
         f"<div class='card'><h3>Recommendations</h3><div class='num'>{len(findings)}</div></div>"
         "</div>"
@@ -436,7 +463,7 @@ def main(report_data: dict, report_title: str = "Azure FinOps Cost Optimization 
             "<div class='section'><h2>Spend by resource group</h2>" + _bar_rows(ordered_rgs, currency) + "</div>"
         )
     by_dimension = data.get("savings_by_dimension", {})
-    if by_dimension:
+    if by_dimension and savings is not None:
         dim_items = sorted(
             [{"name": key, "cost": value} for key, value in by_dimension.items()],
             key=lambda item: float(item.get("cost", 0.0) or 0.0),
@@ -456,7 +483,12 @@ def main(report_data: dict, report_title: str = "Azure FinOps Cost Optimization 
         "association state, age, and naming. Where Azure Monitor metrics or Activity Logs could not be read, "
         "the score relies on those heuristics only and the resource is treated more cautiously.</div>"
         "<div class='small' style='margin-top:8px'>This report is read only. It proposes changes and provides "
-        "operator ready delete commands, but the agent runs none of them.</div></div>"
+        "operator instructions for review, but the agent runs none of them. Candidate estimates, Advisor findings, "
+        "rightsizing and commitment alternatives may overlap. Savings are displayed as a total only after explicit "
+        "reconciliation of currency, window, baseline and mutually exclusive choices. The spend percentage uses "
+        "a normalized 30 day baseline, not invoice savings.</div>"
+        f"<p>{_esc(data.get('reconciliation_notes', 'Savings not reconciled; individual opportunities only.'))}</p>"
+        f"<p>{_esc('; '.join(data.get('notes', [])))}</p></div>"
     )
 
     parts = [header, summary_cards]
@@ -469,6 +501,10 @@ def main(report_data: dict, report_title: str = "Azure FinOps Cost Optimization 
     if findings_html:
         parts.append(findings_html)
     parts.append(limitation)
+    parts.append("<div class='section'><h2>Sources</h2><ul>" + "".join(
+        f"<li><a href='{_esc(source['url'])}'>{_esc(source['title'])}</a></li>"
+        for source in sources if str(source.get("url", "")).startswith("https://learn.microsoft.com/")
+    ) + "</ul></div>")
 
     document = document_shell(
         report_title,
@@ -487,12 +523,14 @@ def main(report_data: dict, report_title: str = "Azure FinOps Cost Optimization 
         handle.write(document)
 
     return {
+        "assessment_status": assessment_status,
+        "sources": sources,
         "report_path": f"/api/files/{filename}",
         "local_path": path,
         "summary": {
             "analyzed_spend": analyzed,
             "estimated_monthly_savings": savings,
-            "savings_percent": round(pct, 1),
+            "savings_percent": round(pct, 1) if pct is not None else None,
             "findings_total": len(findings),
             "findings_by_band": priority_bands,
             "candidates_total": len(candidates),
@@ -510,13 +548,14 @@ def _cli():
     parser = argparse.ArgumentParser(description="Build a self contained HTML FinOps report.")
     parser.add_argument("--input", type=str, default=None, help="Path to a JSON file with report_data. Reads stdin if omitted.")
     parser.add_argument("--title", type=str, default="Azure FinOps Cost Optimization Report")
+    parser.add_argument("--include-identifiers", action="store_true", help="Explicitly retain identifiers for an approved internal audience. Secrets remain filtered.")
     args = parser.parse_args()
     if args.input:
         with open(args.input, "r", encoding="utf-8") as handle:
             report_data = json.load(handle)
     else:
         report_data = json.load(sys.stdin)
-    print(json.dumps(main(report_data=report_data, report_title=args.title), indent=2))
+    print(json.dumps(main(report_data=report_data, report_title=args.title, include_identifiers=args.include_identifiers), indent=2))
 
 
 if __name__ == "__main__":

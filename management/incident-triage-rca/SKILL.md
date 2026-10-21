@@ -22,21 +22,23 @@ Use this skill when the user:
 ## Operating principles
 
 - Read only. This skill reads health, changes, metrics, and logs. It never restarts, scales, or changes a resource. It proposes mitigations with the exact command, and a human runs them.
-- Default Reader scope. It reads within the agent's access. If a read is denied, it records the gap and reasons from what it can read. See references/permissions-and-scope.md.
+- Approved read scope. It reads within the agent's access. If a read is denied, it records the gap and reasons from what it can read. See references/permissions-and-scope.md.
 - Evidence first, and honest about uncertainty. Every hypothesis is tied to timeline evidence and carries a confidence. The most recent change before the symptom is a lead, not a verdict.
 
 ## Workflow
 
-The context tool (tools/gather_context.py) and the shared report renderer (tools/report_render.py) are bundled with this skill. Run them with RunInTerminal using the Python in the agent runtime. Both authenticate with the agent managed identity.
+The collector and shared renderer are bundled with this skill. The collector uses the shared deterministic identity helper; the renderer formats JSON locally. Validate host dependencies and permissions before execution.
 
 ### Phase 1: Gather context for the affected resource
 
-1. Identify the affected resource id from the user or the alert. Run python tools/gather_context.py "<resource id>" [hours] with RunInTerminal. It reads Resource Health (current and recent), the Activity Log changes over the window (24 hours by default), and the neighbouring resources in the same resource group, and prints an evidence object as JSON.
+1. Identify the affected resource id from the user or the alert. Run python tools/gather_context.py "<resource id>" [hours] with RunInTerminal. It follows Resource Health and Activity Log continuations (up to 40 pages each), and neighbour inventory continuations (up to five pages of 200 rows). All caps, truncation and failed reads must be visible as incomplete. Availability statuses do not guarantee a complete history for the requested window.
 2. Pull the signals the evidence points to with RunAzCliReadCommands, following references/triage-method.md: the metrics around the symptom start, and a focused Log Analytics query for errors on the resource.
 
 ### Phase 2: Correlate and reason
 
 Lay the changes and health transitions on one timeline. Line up the symptom start with the nearest preceding change (a deployment, a configuration edit, a scale action, a failed operation). Form a small set of ranked hypotheses, each tied to an event on the timeline, each with a confidence and a next check that would confirm or rule it out. Keep the honest note that correlation is not proof.
+
+Same resource group membership is proximity only, not a dependency. Verify dependencies from configuration IDs, topology or traces. Carry the collector's `assessment_status`, `sources` and incomplete notes into any derived report.
 
 ### Phase 3: Produce the incident report
 
@@ -45,10 +47,24 @@ Lay the changes and health transitions on one timeline. Line up the symptom star
 
 ## Scenario coverage
 
-This skill also answers 5 customer scenarios in the Management category (Service Health incidents, planned maintenance, resource health summary, support ticket drafting, Logic Apps inspection). Open references/scenarios.md when the ask matches one of them: it holds the sample prompt, the run mode, and whether the skill covers it with built in checks or a guided read only prompt.
+This skill implements its documented checks, not every related scenario. Use the related skills for their complete evidence workflows. See [scenario routing](./references/scenarios.md).
+
 
 ## Expected output
 
 - Primary: a self contained HTML incident report with the timeline, the ranked hypotheses, and the proposed mitigations with commands.
 - Inline: the symptom, the probable cause and confidence, the key timeline events, and the first mitigation to try with the check to confirm it.
 - Every hypothesis is tied to timeline evidence and carries a confidence. Every mitigation is a proposal with a command a human runs; the agent runs none of them.
+
+## Sources
+
+- [Activity Log](https://learn.microsoft.com/azure/azure-monitor/essentials/activity-log).
+- [Resource Graph paging](https://learn.microsoft.com/azure/governance/resource-graph/concepts/work-with-data).
+
+## Assessment and customer sharing
+
+Confirm the explicit customer scope and UTC window before collection. Accessible resources are not automatically approved scope. For a tool that enumerates all visible subscriptions, use an identity restricted to the approved scope or the related skill's scoped commands.
+
+Follow [assessment states and limits](./references/assessment-contract.md), [permissions](./references/permissions-and-scope.md), and [customer sharing review](./references/customer-sharing.md), bundled during deployment. The shared renderer produces a sanitized draft by default; `--include-identifiers` requires an explicitly approved customer audience. Review custom exports with the same checklist.
+
+Configure the host using [governance settings](./references/governance.json). General terminal access is not inherently read only. Never apply changes, schedule work, upload files or send messages without separate explicit approval.

@@ -22,17 +22,25 @@ Use this skill when the user asks to:
 ## Operating principles
 
 - Read only. This skill reads database configuration. It never changes a tier, a backup policy, or a replication setting; it recommends the change.
-- Default Reader scope. It reads configuration across the subscriptions this agent can read. If a read is denied, it records the scope as not assessed and continues. See references/permissions-and-scope.md.
+- Approved read scope. It reads configuration across the subscriptions this agent can read. If a read is denied, it records the scope as not assessed and continues. See references/permissions-and-scope.md.
 - Evidence first. Every finding names the resource, the engine, the setting that fired, a severity, and the recommended change.
 
 ## Workflow
 
-The scan tool (tools/data_platform_review.py) and the shared report renderer (tools/report_render.py) are bundled with this skill. Run them with RunInTerminal using the Python in the agent runtime. Both authenticate with the agent managed identity.
+The scan tool (tools/data_platform_review.py) and the shared report renderer (tools/report_render.py) are bundled with this skill. Run them with RunInTerminal using the Python in the agent runtime. The collector uses the configured identity; the local renderer does not authenticate to Azure.
 
 ### Phase 1: Review the data services
 
 1. Run python tools/data_platform_review.py with RunInTerminal. It reads the configuration of SQL databases and servers, PostgreSQL and MySQL Flexible Servers, and Cosmos DB accounts with Azure Resource Graph, evaluates each against the checks in references/checks-catalog.md, assigns a severity per finding, and prints a report_data object as JSON.
 2. For backup retention specifics that Resource Graph cannot answer (Azure SQL long term retention, for example), spot check with the commands in the checks catalog.
+
+### Validation boundary
+
+Read configuration with an explicitly selected identity (`AZURE_CLIENT_ID`, or `SRE_IDENTITY_MODE=system-assigned`). Local credentials require explicit `SRE_IDENTITY_MODE=developer`. Confirm scope before collection; the playbook does not enforce host access.
+
+Missing fields are Not assessed, not Disabled. Engine, SKU, region and API shape must be known before asserting applicability. PostgreSQL geo redundant backup can be set only at server creation, so remediation may need a new server and tested migration path, not an in place toggle. MySQL constraints must be verified separately.
+
+`assessment_status` is Partial for unknown configuration or failed collection and Not assessed for an empty scope. Sources are included in JSON. Configuration does not measure RTO, RPO, restore success, replication lag or failover performance. Obtain workload objectives and timed test evidence separately.
 
 ### Phase 2: Produce the report
 
@@ -44,3 +52,19 @@ The scan tool (tools/data_platform_review.py) and the shared report renderer (to
 - Primary: a self contained HTML data platform report, covering findings by severity and by engine, and the full table naming the setting and the recommended change per resource.
 - Inline: services reviewed, services with High findings, and the top issues by engine.
 - Every finding names the resource, the engine, the setting, a severity, and the recommended change. Nothing is changed; recommendations are for a human to apply.
+
+## Sources
+
+- [PostgreSQL backup and restore](https://learn.microsoft.com/en-us/azure/postgresql/backup-restore/concepts-backup-restore), checked 2026-10-21 for the creation only setting.
+- [SQL zone redundancy](https://learn.microsoft.com/en-us/azure/azure-sql/database/high-availability-sla-local-zone-redundancy).
+- [MySQL high availability](https://learn.microsoft.com/en-us/azure/mysql/flexible-server/concepts-high-availability).
+
+Tests use configuration fixtures and mocked reads, not live database validation.
+
+## Assessment and customer sharing
+
+Confirm the explicit customer scope and UTC window before collection. Accessible resources are not automatically approved scope. For a tool that enumerates all visible subscriptions, use an identity restricted to the approved scope or the related skill's scoped commands.
+
+Follow [assessment states and limits](./references/assessment-contract.md), [permissions](./references/permissions-and-scope.md), and [customer sharing review](./references/customer-sharing.md), bundled during deployment. The shared renderer produces a sanitized draft by default; `--include-identifiers` requires an explicitly approved customer audience. Review custom exports with the same checklist.
+
+Configure the host using [governance settings](./references/governance.json). General terminal access is not inherently read only. Never apply changes, schedule work, upload files or send messages without separate explicit approval.

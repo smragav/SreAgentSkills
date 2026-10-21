@@ -8,12 +8,13 @@ python tools/observability_gap.py | python tools/report_render.py
 
 ## report_data this skill emits
 
-- title: "Observability Coverage Gap". subtitle: missing diagnostic settings, alerts, action groups, and workspaces.
+- title: "Observability Coverage Gap". subtitle: diagnostic routing and enabled alert candidates.
 - meta: window is "Point in time", scope is the count of subscriptions scanned, source is "Azure Resource Graph".
-- summary_cards: resources with gaps, resources with no diagnostic settings, subscriptions with no action group, important resources scanned.
-- charts: gaps by type (no diagnostic settings, no metric alert, no action group, no workspace), and gaps by subscription.
+- summary_cards: configuration gaps, observed diagnostic routing gaps (Unknown when collection is incomplete), missing alert routing candidates, resources scanned.
+- charts: observed configuration gaps by type and subscription. No local destination absence findings.
 - findings: columns resource, resource_type, subscription, resource_group, missing, recommendation, severity. Each row carries a _band equal to its severity.
-- method_notes: whether diagnostic settings could be read in bulk, and any scope not assessed.
+- assessment_status and sources: collection completeness and source links.
+- method_notes: resource API diagnostic coverage, caps, failed reads and remaining validation.
 
 ## Sections the renderer produces
 

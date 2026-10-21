@@ -2,7 +2,9 @@
 
 Seven cost optimization dimensions. For each finding record: resource id, dimension, current configuration, proposed change, estimated monthly saving, risk rating, and evidence. All commands are read only and run within the agent's existing access. If a command returns access denied or authorization failed, the skill may ask the user to grant temporary access to that scope, but it never assigns roles itself. If the user declines, skip that check for that scope, record it as not assessed because of insufficient access, and move on.
 
-Use the azure-pricing approach (Azure retail prices) to estimate the cost of a target SKU, and the current cost from cost_rank, to compute saving = current minus target.
+HTTP collectors use `shared\tools\azure_http.py` and its bundled governance policy for approved HTTPS hosts, explicit timeouts, disabled redirects and bounded transient retries. Authorization failures are not retried. Bundle the shared tools and policy with deployed collectors; missing shared tools fail closed.
+
+Use live retail prices for target estimates and current cost from a reconciled baseline. Record currency, source date, quantity, billing hours, estimate horizon and cost basis. Current negotiated or amortized cost and target retail price are not automatically comparable. Mark the difference uncertain unless normalized to the same scope, window and basis.
 
 Two of these dimensions, orphaned resources (2) and idle resources (4), also feed the termination candidates table. Enumerate those with Azure Resource Graph and score each one by confidence to terminate using references/idle-detection.md. The other dimensions produce savings recommendations.
 
@@ -13,6 +15,7 @@ Start here. Advisor already finds many opportunities.
 - List: az advisor recommendation list --category Cost --subscription <id>
 - Capture each recommendation's impacted resource, problem, and the saving Advisor reports.
 - Treat Advisor savings as the baseline and reconcile with your own findings to avoid double counting.
+- Deduplicate by resource and change, not only recommendation id. Candidate cleanup, rightsizing, scheduling and commitment savings on the same usage can overlap.
 
 Risk: low. Evidence: the Advisor recommendation id and its reported saving.
 
@@ -35,6 +38,7 @@ Reservations and savings plans for steady state usage.
 
 - Call the commitment_recommendations tool. It returns reservation recommendations and, on a best effort basis, savings plan recommendations, each with the projected saving.
 - Cross check against current coverage so you do not over recommend.
+- Treat reservation and savings plan recommendations as potentially overlapping alternatives. Preserve term, currency, scope, quantity and recommendation horizon. The helper deliberately returns no combined net savings total. Even recommendations of one kind can be alternative terms or scopes, so do not sum them without reconciliation.
 
 Saving: the projected net saving from the recommendation. Risk: medium (commitment term). Evidence: the recommendation payload and the usage that backs it.
 
@@ -43,7 +47,7 @@ Saving: the projected net saving from the recommendation. Risk: medium (commitme
 Resources that run but do little. Requires metrics.
 
 - Pull Azure Monitor metrics over a 30 day window: az monitor metrics list --resource <id> --metric "Percentage CPU" --interval PT1H --start-time <iso> --end-time <iso>
-- Flag a virtual machine as idle when average CPU is below 5 percent and network throughput is low across the window.
+- Treat low CPU and throughput as an idle review signal, not proof. Confirm metric coverage and gaps, schedule, seasonal use, workload dependencies and the owner before recommending a change.
 - Apply the same idea to gateways and load balancers with negligible throughput.
 - Deallocated virtual machines found through Azure Resource Graph also become termination candidates; score and price them with references/idle-detection.md.
 
@@ -66,7 +70,23 @@ Saving: shorter retention, a commitment tier, or moving verbose tables to basic 
 
 ## 7. Dev and test scheduling
 
-- Identify non production subscriptions or resource groups by naming convention or tags.
+- Use names and tags to identify possible nonproduction workloads, then confirm the environment and intended operating hours with the owner. Naming alone never establishes nonproduction.
 - Flag virtual machines and other compute that run 24 by 7 but are only used in working hours.
 
-Saving: a scheduled shutdown outside working hours, roughly the off hours fraction of compute cost. Risk: low. Evidence: the tag or naming convention plus the run pattern.
+Saving: a scheduling estimate against confirmed working hours and the same compute baseline. Risk depends on workload requirements. Evidence: owner confirmed environment, schedule and observed usage. Do not add this estimate to a termination or overlapping rightsizing opportunity.
+
+## Scope, completeness and aggregation
+
+Approve subscriptions before collection. Cost Management follows `properties.nextLink`; Consumption and commitment page caps fail explicitly if a continuation remains. Consumption fallback is not amortized cost. Failed sources are Partial or Not assessed, not zero spend or zero savings. Rank separately by currency and cost basis. Never total currencies without explicit conversion evidence.
+
+The report requires one explicit currency and a subscription baseline matching analyzed spend. A realizable savings total additionally requires `totals.savings_reconciled=true` and `reconciliation_notes` explaining deduplication, alternatives, estimate windows and cost basis. Otherwise only individual opportunities are shown.
+
+## Sources
+
+Verified against Microsoft Learn during this correction:
+
+- [Cost Management query properties, including nextLink](https://learn.microsoft.com/javascript/api/@azure/arm-costmanagement/queryproperties)
+- [Cost Management access](https://learn.microsoft.com/azure/cost-management-billing/costs/assign-access-acm-data)
+- [Consumption usage details](https://learn.microsoft.com/rest/api/consumption/usage-details/list)
+- [Reservation recommendations](https://learn.microsoft.com/rest/api/consumption/reservation-recommendations/list)
+- [Benefit recommendations](https://learn.microsoft.com/rest/api/cost-management/benefit-recommendations/list)

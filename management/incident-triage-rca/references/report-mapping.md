@@ -23,6 +23,7 @@ The evidence object from gather_context provides:
 
 - current_health: use it in the summary card and as the first timeline row.
 - timeline: change events from the Activity Log and health transitions, already severity tagged and sorted. These become the findings rows.
-- neighbors: the same resource group resources, for the optional health chart and for dependency reasoning.
+- neighbors: same resource group inventory only, not proven dependencies or health observations. Do not construct a neighbour health chart without separate health evidence.
+- assessment_status, sources and notes: preserve collection completeness and caps in the derived report. Additional failed metric or log reads can only reduce completeness.
 
 Add your metric and log evidence as extra timeline rows so the whole story sits in one table.

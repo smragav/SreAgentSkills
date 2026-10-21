@@ -1,6 +1,6 @@
 ---
 name: alert-hygiene-review
-description: Use when the user asks about alert noise, alert fatigue, flapping alerts, too many alerts, noisy alert rules, alerts nobody acts on, alert tuning, or severity misconfiguration. Aggregates fired alerts over a window by rule, finds the noisy rules, the ones that auto resolve without anyone acting, and the disabled rules, and produces a self contained HTML alert hygiene report.
+description: Use when the user asks about alert noise, alert fatigue, flapping alerts, too many alerts, noisy alert rules, alert tuning, or severity misconfiguration. Separately measures monitor resolution, user closure and timestamp proven rapid resolution, and reviews disabled rules.
 tools:
   - RunAzCliReadCommands
   - RunInTerminal
@@ -9,7 +9,7 @@ tools:
 
 # Alert Hygiene Review
 
-This skill reduces alert fatigue for the subscriptions this agent can read. It aggregates fired alerts over a window by rule, finds the rules that fire too often, the rules whose alerts auto resolve without anyone acting, the high severity rules that cry wolf, and the alert rules that are disabled, and produces a single self contained HTML report. Cutting alert noise is one of the highest value things an on call team can do, because a quiet, trustworthy pager is one people act on. It runs on demand or as a scheduled sweep.
+This skill reviews alert volume, monitor condition, user state, measured rapid resolution and disabled rules across the visible subscriptions. Resolution and closure do not prove that nobody acted. The report supplies tuning candidates for an owner to review, not an automatic severity downgrade.
 
 ## When to use this skill
 
@@ -22,29 +22,42 @@ Use this skill when the user asks to:
 ## Operating principles
 
 - Read only. This skill reads fired alerts and alert rule configuration. It never changes, disables, or creates an alert rule; it recommends the tuning.
-- Default Reader scope. It reads the alert history and rules for the subscriptions this agent can read. If a read is denied, it records the scope as not assessed and continues. See references/permissions-and-scope.md.
-- Evidence first. Every finding names the rule, its fire count over the window, the share that auto resolved without action, and the recommended tuning.
+- Approved read scope. It reads the alert history and rules for the subscriptions this agent can read. If a read is denied, it records the scope as not assessed and continues. See references/permissions-and-scope.md.
+- Evidence first. Every finding separates monitor resolution from user closure. Rapid resolution requires valid durations. Without assessed durations it is Not assessed, not 0 percent. Partial coverage shows an explicit lower bound over all alerts and assessed and unknown counts. Never infer absence of human action.
 
 ## Workflow
 
-The scan tool (tools/alert_hygiene.py) and the shared report renderer (tools/report_render.py) are bundled with this skill. Run them with RunInTerminal using the Python in the agent runtime. Both authenticate with the agent managed identity.
+The scan tool and shared renderer are bundled with this skill. The collector uses the shared deterministic identity helper; the renderer formats JSON locally. Validate host dependencies and permissions before execution.
 
 ### Phase 1: Aggregate the alert history
 
-1. Run python tools/alert_hygiene.py with RunInTerminal. It reads fired alerts over the window (seven days by default) from Azure Monitor, groups them by rule, computes the fire count, the auto resolved share, and the unacknowledged share per rule, reads the disabled rules with Azure Resource Graph, and prints a report_data object as JSON. Pass a window of 1, 7, or 30 days as an argument.
-2. It classifies each rule against the thresholds in references/checks-catalog.md: noisy, cries wolf, alerts not acknowledged, or disabled.
+1. Run python tools/alert_hygiene.py with RunInTerminal. Pass exactly 1, 7 or 30 days (default 7). It groups alerts by rule and measures counts, monitor resolution, user closure, current New state and timestamp proven resolution within five minutes.
+2. It reviews volume, rapid resolution, current New state and disabled rules. Alert pagination stops at 40 pages; outstanding continuation marks the assessment incomplete rather than reporting a complete empty result.
 
 ### Phase 2: Produce the report
 
 1. Pipe the scan into the renderer: python tools/alert_hygiene.py | python tools/report_render.py with RunInTerminal. It writes the self contained HTML report and returns the path. Store it with SaveFileToBlob for a link.
-2. Present the report, then a short inline summary: alerts fired in the window, the noisiest rules, rules that cry wolf, disabled rules, and the top tuning actions.
+2. Present the assessment status, actual queried window, noisy rules, measured rapid resolutions, disabled rules and any collection failure.
 
 ## Scenario coverage
 
-This skill also answers 3 customer scenarios in the Management category (alert rule audit, alert fatigue, fired alerts summary). Open references/scenarios.md when the ask matches one of them: it holds the sample prompt, the run mode, and whether the skill covers it with built in checks or a guided read only prompt.
+This skill implements its documented checks, not every related scenario. Use the related skills for their complete evidence workflows. See [scenario routing](./references/scenarios.md).
+
 
 ## Expected output
 
-- Primary: a self contained HTML alert hygiene report, covering alerts by severity, the noisiest rules, and the full table with the fire count, auto resolved share, and recommended tuning per rule.
-- Inline: alerts fired, the noisiest rules, cry wolf rules, and disabled rules.
-- Every finding names the rule, its fire count and auto resolved share over the window, and the recommended tuning. Nothing is changed; recommendations are for a human to apply.
+- Primary: a report separating fire count, monitor resolution, user closure, timestamp proven rapid resolution and current New state.
+- Nothing is changed. Owners must review business impact and action history before tuning.
+
+## Sources
+
+- [Alerts and state](https://learn.microsoft.com/azure/azure-monitor/alerts/alerts-overview#alerts-and-state), verified: user response and monitor condition are independent.
+- [Alert instance retention](https://learn.microsoft.com/azure/azure-monitor/alerts/alerts-manage-alert-instances).
+
+## Assessment and customer sharing
+
+Confirm the explicit customer scope and UTC window before collection. Accessible resources are not automatically approved scope. For a tool that enumerates all visible subscriptions, use an identity restricted to the approved scope or the related skill's scoped commands.
+
+Follow [assessment states and limits](./references/assessment-contract.md), [permissions](./references/permissions-and-scope.md), and [customer sharing review](./references/customer-sharing.md), bundled during deployment. The shared renderer produces a sanitized draft by default; `--include-identifiers` requires an explicitly approved customer audience. Review custom exports with the same checklist.
+
+Configure the host using [governance settings](./references/governance.json). General terminal access is not inherently read only. Never apply changes, schedule work, upload files or send messages without separate explicit approval.

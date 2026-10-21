@@ -12,7 +12,9 @@ python tools/change_scan.py | python tools/report_render.py
 - meta: window is the read window in days, scope is the count of subscriptions scanned, source is "Azure Activity Log".
 - summary_cards: total changes, changes linked to a degradation, deletes, failed changes.
 - charts: findings by severity, and findings by subscription.
-- findings: columns time, resource, change, caller, outcome, note, severity. Each row carries a _band equal to its severity.
+- findings: all collected writes, deletes and actions. Columns include original timestamp, resource, full resource_id, subscription, change, caller, outcome, note and severity.
+- collected_changes: original normalized change records, including successful unlinked writes.
+- assessment_status and sources: collection completeness and source links.
 - method_notes: the read and correlation windows, and the reminder that correlation is not proof.
 
 ## Sections the renderer produces
@@ -24,3 +26,5 @@ python tools/change_scan.py | python tools/report_render.py
 5. Method and limits.
 
 The note column is where the value sits: for a linked change it names the degradation it preceded and the time gap, so a reader can judge the link.
+
+Cross resource correlations require subscription plus resource group. Same group membership is not a dependency. The Activity Log source does not provide a complete data plane audit.

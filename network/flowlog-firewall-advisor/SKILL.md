@@ -34,7 +34,7 @@ This skill reads the traffic that actually flowed.
 
 - **Read only.** This skill reads flow log data. It never creates, changes or deletes
   a rule, a policy, or a firewall. Proposed rules are text for a human to review.
-- **Default Reader scope.** It reads across the subscriptions this agent can read,
+- **Approved read scope.** It reads across the subscriptions this agent can read,
   plus the Log Analytics workspaces receiving flow logs. A denied read is recorded
   as not assessed rather than treated as a failure. See
   `references/permissions-and-scope.md`.
@@ -48,15 +48,15 @@ This skill reads the traffic that actually flowed.
 
 The analyzer (`tools/flowlog_firewall_advisor.py`) and the shared renderer
 (`tools/report_render.py`) are bundled with this skill. Run them with RunInTerminal
-using the Python in the agent runtime. Both authenticate with the agent managed
-identity.
+using the configured Python host. The collector authenticates through the shared
+identity helper; the renderer formats JSON locally.
 
-An agent can carry both a system assigned and a user assigned identity, and usually
-only one of them holds the roles. The tool resolves this itself: it reads the agent
-resource named in its own token and authenticates as the user assigned identity
-attached to it. `--client-id <clientId>` overrides that, and
-`python tools/flowlog_firewall_advisor.py --whoami` prints the principal each
-audience resolves to when a read is refused or discovery comes back empty.
+Choose identity deterministically: `--client-id <clientId>` or `AZURE_CLIENT_ID`
+selects a user assigned managed identity. `SRE_IDENTITY_MODE=system-assigned`
+explicitly selects system identity. `SRE_IDENTITY_MODE=developer` explicitly opts
+into the local developer credential chain. No discovery or silent fallback is
+promised. Validate installed dependencies and host permissions before execution;
+tool descriptions are not an authorization boundary.
 
 ### Phase 1: Find the flow logs
 
@@ -70,13 +70,16 @@ audience resolves to when a read is refused or discovery comes back empty.
    the identity is right, report the empty result. Flow logs written only to a storage
    account do not populate `NTANetAnalytics`. Say so plainly rather than reporting an
    empty result as a clean bill of health, and offer the two ways forward: enable
-   Traffic Analytics, or point the skill at the storage account.
-3. If more than one workspace is found, use the one with the most enabled flow logs
-   unless the user named a scope.
+   Traffic Analytics after approval, or use a separate storage log analysis workflow.
+   This tool does not implement storage account ingestion.
+3. Select the requested workspace explicitly. If several workspaces are in scope,
+   run each and report skipped or denied workspaces; do not silently choose only
+   the busiest workspace. Discovery reports disabled or unconfigured destinations
+   and its first page Resource Graph limit.
 
 ### Phase 2: Check the window is real
 
-1. Run `python tools/flowlog_firewall_advisor.py --coverage --workspace <guid>`. It
+1. Run `python tools/flowlog_firewall_advisor.py --coverage --workspace <guid> --subscription <guid> --target-resource <vnet-or-subnet-id>`. It
    reports how far back the workspace genuinely holds data and how fresh the newest
    record is.
 2. **Do not skip this.** Asking for 30 days from a workspace holding 6 is the most
@@ -89,7 +92,7 @@ audience resolves to when a read is refused or discovery comes back empty.
 ### Phase 3: Analyse and report
 
 1. Run the analysis and pipe it into the renderer:
-   `python tools/flowlog_firewall_advisor.py --workspace <guid> --days <n> | python tools/report_render.py`
+   `python tools/flowlog_firewall_advisor.py --workspace <guid> --days <n> --subscription <guid> --target-resource <vnet-or-subnet-id> | python tools/report_render.py`
    with RunInTerminal. It writes the self contained HTML report and returns the path.
    Store it with SaveFileToBlob for a link.
 2. Present the report, then a short inline summary: the highest severity findings,
@@ -111,7 +114,8 @@ Severity reflects blast radius, not effort. The full catalog is in
 
 ## Scenario coverage
 
-This skill also answers 7 customer scenarios in the Network category (topology, firewall rules and logs, DNS and VPN troubleshooting, peering, ExpressRoute and VPN gateway health, DNS zone hygiene). Open references/scenarios.md when the ask matches one of them: it holds the sample prompt, the run mode, and whether the skill covers it with built in checks or a guided read only prompt.
+This skill implements its documented checks, not every related scenario. Use the related skills for their complete evidence workflows. See [scenario routing](./references/scenarios.md).
+
 
 ## Expected output
 
@@ -134,5 +138,28 @@ useful proposal and a false sense of safety.
 - **Network rules only.** Application rules need fully qualified domain names, which
   cannot be derived from IP flow logs. Egress to software as a service appears as IP
   literals unless Traffic Analytics resolved a service tag.
-- **Flow logs record what happened, not what should be allowed.** Recommend deploying
-  any derived rule set in a non enforcing mode alongside the existing policy first.
+- **Flow logs record observations, not intent or successful application delivery.**
+  Keep rules as a draft, test allow and deny paths in an isolated staging
+  environment, obtain owner approval, and plan a controlled deployment and rollback.
+  Do not recommend a universal non enforcing Azure Firewall deployment mode.
+- **Scope must constrain collection.** `--subscription` filters the logging target
+  subscription in workspace queries and discovery. Repeat `--target-resource` to
+  filter actual VNet or subnet IDs. Without either filter, the selected workspace
+  is the scope, not a particular VNet.
+- **Customer sharing is a separate review.** Default output aliases identifiers and
+  redacts credentials. `--include-identifiers` is an explicit internal draft option,
+  not approval to publish. Inspect the report, command snippets and exported data
+  before sharing. No external send is performed.
+
+## Sources
+
+- [Azure Firewall limits](https://learn.microsoft.com/azure/azure-resource-manager/management/azure-subscription-service-limits#azure-firewall-limits), verified: 20,000 combinations, with destination port count divided by 14 and rounded up.
+- [NTANetAnalytics](https://learn.microsoft.com/azure/azure-monitor/reference/tables/ntanetanalytics), verified: `TargetResourceId` identifies the logging target.
+
+## Assessment and customer sharing
+
+Confirm the explicit customer scope and UTC window before collection. Accessible resources are not automatically approved scope. For a tool that enumerates all visible subscriptions, use an identity restricted to the approved scope or the related skill's scoped commands.
+
+Follow [assessment states and limits](./references/assessment-contract.md), [permissions](./references/permissions-and-scope.md), and [customer sharing review](./references/customer-sharing.md), bundled during deployment. The shared renderer produces a sanitized draft by default; `--include-identifiers` requires an explicitly approved customer audience. Review custom exports with the same checklist.
+
+Configure the host using [governance settings](./references/governance.json). General terminal access is not inherently read only. Never apply changes, schedule work, upload files or send messages without separate explicit approval.

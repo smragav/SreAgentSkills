@@ -15,10 +15,15 @@ system_prompt: |
   1. Run network_exposure.py to find NSG rules open to the internet, storage with
      public or anonymous access, and PaaS with public network access.
   2. Pipe the scan into report_render.py and give the user the HTML report and a
-     short summary led by the critical exposures (management or all ports open).
+     short summary led by critical Allow configurations, not proven reachability.
 
   Every finding names the resource, the exposure, a severity, and the recommended
   change. Recommendations are for a human to apply.
+  Include broad IPv4 and IPv6 sources, prefix unions and unknown sources. NSG
+  priority, NIC and subnet rules, routes and PaaS firewalls need confirmation.
+  PublicNetworkAccess enabled alone does not prove unrestricted SQL or PaaS
+  exposure. Preserve full resource ids. Follow approved scope and explicit
+  identity selection from SKILL.md; playbook gates do not enforce host access.
 enable_skills: true
 allowed_skills:
   - network-exposure-review

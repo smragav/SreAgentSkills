@@ -14,6 +14,14 @@ classification helpers can be unit tested without them. See references/checks-ca
 
 import json
 import sys
+import math
+from pathlib import Path
+
+for _parent in Path(__file__).resolve().parents:
+    _tools = _parent / "shared" / "tools"
+    if (_tools / "azure_http.py").is_file():
+        sys.path.insert(0, str(_tools))
+        break
 
 ARM_ENDPOINT = "https://management.azure.com"
 SEVERITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
@@ -32,13 +40,16 @@ def verdict_for(severities):
     return "GO"
 
 
-def verdicts(findings):
+def verdicts(findings, assessments=None):
     """Return {overall, Reliability, Exposure, Capacity}. Pure and testable."""
     out = {}
     for category in CATEGORIES:
-        out[category] = verdict_for([f["severity"] for f in findings if f["category"] == category])
-    order = {"NO-GO": 0, "CAUTION": 1, "GO": 2}
-    out["overall"] = min((out[c] for c in CATEGORIES), key=lambda v: order[v]) if findings else "GO"
+        result = verdict_for([f["severity"] for f in findings if f["category"] == category])
+        checks = [a for a in (assessments or []) if a["category"] == category]
+        complete = bool(checks) and all(a["state"] == "Complete" for a in checks)
+        out[category] = "INCOMPLETE" if not complete and result != "NO-GO" else result
+    order = {"NO-GO": 0, "INCOMPLETE": 1, "CAUTION": 2, "GO": 3}
+    out["overall"] = min((out[c] for c in CATEGORIES), key=lambda v: order[v])
     return out
 
 
@@ -79,8 +90,11 @@ def _finding(category, row, issue, recommendation, severity):
     }
 
 
-def build_report_data(findings, scope_label, notes):
-    verdict = verdicts(findings)
+def build_report_data(findings, scope_label, notes, assessments=None):
+    verdict = verdicts(findings, assessments)
+    assessments = assessments or []
+    complete = sum(a["state"] == "Complete" for a in assessments)
+    categories_present = all(any(a["category"] == c for a in assessments) for c in CATEGORIES)
     findings = sorted(findings, key=lambda f: SEVERITY_ORDER.get(f["severity"], 9))
     by_cat, sev_counts = {}, {}
     for finding in findings:
@@ -89,6 +103,10 @@ def build_report_data(findings, scope_label, notes):
     cat_items = [{"name": c, "value": by_cat.get(c, 0)} for c in CATEGORIES]
     sev_items = [{"name": b, "value": sev_counts[b], "band": b} for b in ("Critical", "High", "Medium", "Low") if b in sev_counts]
     return {
+        "assessment_status": ("Complete" if complete == len(assessments) and complete and categories_present else
+                              "Partial" if complete else "Not assessed"),
+        "assessments": assessments,
+        "sources": [{"title": "Azure usage and quotas", "url": "https://learn.microsoft.com/en-us/azure/quotas/view-quotas"}],
         "title": "Pre-Change Readiness",
         "subtitle": f"Go / no-go for {scope_label}.",
         "meta": {"window": "Point in time", "scope": scope_label, "source": "Azure Resource Graph and usage"},
@@ -108,7 +126,9 @@ def build_report_data(findings, scope_label, notes):
             "rows": findings,
         },
         "method_notes": notes + [
-            "Verdict: no-go for any Critical or High, caution for Medium only, go when clean. Overall is the worst category.",
+            "NO-GO for Critical or High. INCOMPLETE blocks GO if any required read is missing, failed, or scope cannot be confirmed. CAUTION for Medium after complete reads.",
+            "Capacity counters cover compute and network in observed regions only, not SKU allocation guarantees or all service quotas.",
+            "Configuration checks do not validate workload failover, effective network reachability, change correctness, or measured recovery objectives.",
             f"Scope checked: {scope_label}.",
         ],
     }
@@ -122,7 +142,7 @@ def _headers():
 
 
 def _run_graph(headers, query):
-    import requests
+    import azure_http as requests
 
     url = f"{ARM_ENDPOINT}/providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01"
     rows, skip_token = [], None
@@ -140,7 +160,7 @@ def _run_graph(headers, query):
 
 
 def _get(headers, url):
-    import requests
+    import azure_http as requests
 
     response = requests.get(url, headers=headers, timeout=90)
     response.raise_for_status()
@@ -149,26 +169,37 @@ def _get(headers, url):
 
 def main(subscription: str, resource_group: str = None) -> dict:
     headers = _headers()
-    notes = []
+    notes, assessments = [], []
     scope = f"subscriptionId == '{subscription}'"
     if resource_group:
         scope += f" and resourceGroup =~ '{resource_group}'"
     label = subscription + (f" / {resource_group}" if resource_group else "")
     findings = []
 
-    def scan(query, handler):
+    try:
+        inventory = _run_graph(headers, f"resources | where {scope} | project id")
+        scope_confirmed = bool(inventory)
+    except Exception:
+        scope_confirmed = False
+    if not scope_confirmed:
+        notes.append("Target scope is empty or unreadable. Visibility and scope approval must be confirmed before any GO.")
+
+    def scan(category, check, query, handler):
+        state = "Not assessed"
         try:
             for row in _run_graph(headers, query):
                 handler(row)
-        except Exception as error:  # noqa: BLE001
-            notes.append(f"A readiness query could not be read ({error}).")
+            state = "Complete" if scope_confirmed else "Not assessed"
+        except Exception:  # noqa: BLE001
+            notes.append(f"{category} readiness query could not be read.")
+        assessments.append({"check": check, "category": category, "state": state})
 
     # Reliability
-    scan(f"resources | where {scope} | where type =~ 'microsoft.compute/virtualmachines' | where (isnull(zones) or array_length(zones)==0) and isnull(properties.availabilitySet) | project name, id, subscriptionId, resourceGroup",
+    scan("Reliability", "VM placement", f"resources | where {scope} | where type =~ 'microsoft.compute/virtualmachines' | where (isnull(zones) or array_length(zones)==0) and isnull(properties.availabilitySet) | project name, id, subscriptionId, resourceGroup",
          lambda r: findings.append(_finding("Reliability", r, "No availability zone or availability set", "Deploy across zones or an availability set.", "High")))
-    scan(f"resources | where {scope} | where type =~ 'microsoft.storage/storageaccounts' | where tostring(sku.name) endswith 'LRS' | project name, id, subscriptionId, resourceGroup",
+    scan("Reliability", "Storage replication", f"resources | where {scope} | where type =~ 'microsoft.storage/storageaccounts' | where tostring(sku.name) endswith 'LRS' | project name, id, subscriptionId, resourceGroup",
          lambda r: findings.append(_finding("Reliability", r, "Locally redundant storage", "Use ZRS or GRS where the data warrants it.", "Medium")))
-    scan(f"resources | where {scope} | where type =~ 'microsoft.sql/servers/databases' | where tostring(sku.tier) in~ ('Premium','BusinessCritical') and tostring(properties.zoneRedundant) =~ 'false' | project name, id, subscriptionId, resourceGroup",
+    scan("Reliability", "SQL zone redundancy", f"resources | where {scope} | where type =~ 'microsoft.sql/servers/databases' | where tostring(sku.tier) in~ ('Premium','BusinessCritical') and tostring(properties.zoneRedundant) =~ 'false' | project name, id, subscriptionId, resourceGroup",
          lambda r: findings.append(_finding("Reliability", r, "Premium database without zone redundancy", "Enable zoneRedundant on the database.", "High")))
 
     # Exposure
@@ -182,26 +213,34 @@ def main(subscription: str, resource_group: str = None) -> dict:
         severity, label_txt = classify_ports(specs)
         findings.append(_finding("Exposure", row, f"{row.get('ruleName', '')}: {label_txt}", "Restrict the source or use Private Link.", severity))
 
-    scan(f"resources | where {scope} | where type =~ 'microsoft.network/networksecuritygroups' | mv-expand rule = properties.securityRules | extend p = rule.properties | where tostring(p.direction) =~ 'Inbound' and tostring(p.access) =~ 'Allow' | project name, id, resourceGroup, subscriptionId, ruleName=tostring(rule.name), src=tostring(p.sourceAddressPrefix), srcs=p.sourceAddressPrefixes, portRange=tostring(p.destinationPortRange), portRanges=p.destinationPortRanges",
+    scan("Exposure", "NSG inbound rules", f"resources | where {scope} | where type =~ 'microsoft.network/networksecuritygroups' | mv-expand rule = properties.securityRules | extend p = rule.properties | where tostring(p.direction) =~ 'Inbound' and tostring(p.access) =~ 'Allow' | project name, id, resourceGroup, subscriptionId, ruleName=tostring(rule.name), src=tostring(p.sourceAddressPrefix), srcs=p.sourceAddressPrefixes, portRange=tostring(p.destinationPortRange), portRanges=p.destinationPortRanges",
          nsg_handler)
-    scan(f"resources | where {scope} | where type =~ 'microsoft.storage/storageaccounts' | where tostring(properties.allowBlobPublicAccess) =~ 'true' | project name, id, subscriptionId, resourceGroup",
+    scan("Exposure", "Storage public blobs", f"resources | where {scope} | where type =~ 'microsoft.storage/storageaccounts' | where tostring(properties.allowBlobPublicAccess) =~ 'true' | project name, id, subscriptionId, resourceGroup",
          lambda r: findings.append(_finding("Exposure", r, "Anonymous blob public access allowed", "Set allowBlobPublicAccess to false.", "High")))
-    scan(f"resources | where {scope} | where type in~ ('microsoft.sql/servers','microsoft.keyvault/vaults','microsoft.documentdb/databaseaccounts','microsoft.dbforpostgresql/flexibleservers','microsoft.dbformysql/flexibleservers') | where tostring(properties.publicNetworkAccess) =~ 'Enabled' | project name, id, subscriptionId, resourceGroup",
+    scan("Exposure", "PaaS public access", f"resources | where {scope} | where type in~ ('microsoft.sql/servers','microsoft.keyvault/vaults','microsoft.documentdb/databaseaccounts','microsoft.dbforpostgresql/flexibleservers','microsoft.dbformysql/flexibleservers') | where tostring(properties.publicNetworkAccess) =~ 'Enabled' | project name, id, subscriptionId, resourceGroup",
          lambda r: findings.append(_finding("Exposure", r, "Public network access enabled", "Use Private Link or restrict to known networks.", "Medium")))
 
     # Capacity: usage counters in the regions the scope uses
     try:
         locations = {r.get("location") for r in _run_graph(headers, f"resources | where {scope} | where isnotempty(location) | distinct location") if r.get("location") and r.get("location").lower() != "global"}
     except Exception:  # noqa: BLE001
+        notes.append("Capacity location discovery failed.")
         locations = set()
+    if not locations:
+        assessments.append({"check": "Capacity location discovery", "category": "Capacity", "state": "Not assessed"})
+        notes.append("No applicable capacity regions confirmed. Capacity is not assessed.")
     for location in locations:
         for provider, api in (("Microsoft.Compute", "2023-07-01"), ("Microsoft.Network", "2023-09-01")):
+            state = "Not assessed"
             try:
-                for item in _get(headers, f"{ARM_ENDPOINT}/subscriptions/{subscription}/providers/{provider}/locations/{location}/usages?api-version={api}"):
-                    limit = float(item.get("limit", 0) or 0)
-                    current = float(item.get("currentValue", 0) or 0)
-                    if limit <= 0:
+                items = _get(headers, f"{ARM_ENDPOINT}/subscriptions/{subscription}/providers/{provider}/locations/{location}/usages?api-version={api}")
+                valid = 0
+                for item in items:
+                    limit = float(item["limit"])
+                    current = float(item["currentValue"])
+                    if limit <= 0 or current < 0 or not math.isfinite(limit) or not math.isfinite(current):
                         continue
+                    valid += 1
                     pct = current / limit * 100.0
                     if pct < 80:
                         continue
@@ -213,10 +252,15 @@ def main(subscription: str, resource_group: str = None) -> dict:
                         "issue": f"{name} at {pct:.0f}% of quota", "recommendation": "Request a quota increase before the change.",
                         "severity": severity, "_band": severity,
                     })
+                if valid == len(items) and valid and scope_confirmed:
+                    state = "Complete"
+                else:
+                    notes.append(f"No finite capacity counters assessed for {provider} in {location}.")
             except Exception:  # noqa: BLE001
-                pass
+                notes.append(f"Capacity counters could not be read for {provider} in {location}.")
+            assessments.append({"check": f"{provider} {location}", "category": "Capacity", "state": state})
 
-    return build_report_data(findings, label, notes)
+    return build_report_data(findings, label, notes, assessments)
 
 
 if __name__ == "__main__":

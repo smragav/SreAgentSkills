@@ -4,6 +4,8 @@ Expiry sources and how the scan reads them. Some are management plane and covere
 
 For each finding the tool records: item name, kind, source, subscription, expiry date, days remaining, a severity from the days remaining, and the recommended action.
 
+ARM, vault and Graph HTTP reads use `shared\tools\azure_http.py` and the bundled governance policy for approved HTTPS hosts, explicit timeouts, disabled redirects and bounded transient retries. Authorization failures are not retried. Deployed bundles must include the shared tools and policy.
+
 ## 1. App Service certificates (Resource Graph, Reader)
 
 ```
@@ -20,22 +22,28 @@ List the vaults, then read item expiry from each vault's data plane.
 az graph query -q "resources | where type =~ 'microsoft.keyvault/vaults' | project name, id, subscriptionId, resourceGroup, vaultUri=tostring(properties.vaultUri)" --first 1000
 ```
 
-The tool reads {vaultUri}certificates and {vaultUri}secrets with a token for the https://vault.azure.net audience and takes the attributes.exp value. This needs a Key Vault read permission (Key Vault Reader plus a data action, or a list access policy). A vault that denies the read is recorded as not assessed. Managed secrets that back a certificate are skipped to avoid double counting. Fix for a finding: rotate the secret, or renew the certificate (enable autorotation where the issuer supports it).
+The tool lists `{vaultUri}/certificates` and `{vaultUri}/secrets` with a token for `https://vault.azure.net` and reads `attributes.exp` and `attributes.enabled`. It never calls an item value endpoint. Key Vault Reader on an RBAC vault reads metadata without secret contents or key material; no extra secret value permission is needed. Access policy vaults require certificate and secret list permissions. Network restrictions can still prevent a read. A denied collection is Not assessed; certificate and secret collections are attempted independently.
+
+The vault collector is configured for public Azure `*.vault.azure.net` metadata endpoints. Other clouds are Not assessed until an approved endpoint and audience configuration is supplied. Continuations must stay on the same vault collection path, never an item value path.
+
+Managed secrets backing certificates are retained as metadata records and may correspond to a certificate finding. Counts describe records, not unique outage risks. Missing expiry is explicitly unknown rather than omitted. Disabled records are Low severity and distinct from active expiry risk.
 
 Verify one vault by hand:
 
 ```
 az keyvault certificate list --vault-name <vault> --query "[].{name:name, expires:attributes.expires}"
-az keyvault secret list --vault-name <vault> --query "[?attributes.expires].{name:name, expires:attributes.expires}"
+az keyvault secret list --vault-name <vault> --query "[].{name:name, expires:attributes.expires, enabled:attributes.enabled}"
 ```
 
-## 3. Application and service principal credentials (Microsoft Graph)
+## 3. Approved application registration credentials (Microsoft Graph)
 
 ```
 GET https://graph.microsoft.com/v1.0/applications?$select=displayName,appId,passwordCredentials,keyCredentials
 ```
 
-The tool reads passwordCredentials and keyCredentials endDateTime with a token for the Microsoft Graph audience. This needs a directory read (for example Application.Read.All). Where it is not granted, the source is recorded as not assessed. Fix for a finding: roll the client secret or certificate credential before it expires and update the consumers.
+Graph is off by default. Pass `--application-ids <approved-object-ids>` to read specific application objects. Use `--allow-tenant-directory` only after explicit approval to enumerate tenant application registrations, never merely because the identity has technical permission. `Application.Read.All` application permission requires administrator consent for this application read. ARM scope approval does not authorize directory enumeration.
+
+The collector retains credential ids and endDateTime metadata, not credential values or key material. `/applications` does not enumerate credentials on all service principal objects, including enterprise applications. Those objects and tenant sign ins remain Not assessed. Page cap exhaustion is explicitly incomplete.
 
 ## Severity from days remaining
 
@@ -46,6 +54,17 @@ The tool reads passwordCredentials and keyCredentials endDateTime with a token f
 
 Beyond the horizon: not reported. Pass a larger horizon argument for more lead time before a big renewal season.
 
+Missing expiry is always reported as unknown, including when no horizon can be calculated. Disabled items within the horizon remain visible but are excluded from active expired and expiring summary counts.
+
 ## Note on App Gateway and other embedded certificates
 
 Certificates embedded directly in an Application Gateway or a Front Door listener are not enumerated here; prefer Key Vault referenced certificates, which this skill can see. Where embedded certificates are in use, check them by hand and consider moving them to Key Vault.
+
+## Sources
+
+Verified against Microsoft Learn during this correction:
+
+- [Key Vault Reader metadata permissions](https://learn.microsoft.com/azure/key-vault/general/rbac-guide)
+- [Secret listing returns identifiers and attributes, not values](https://learn.microsoft.com/rest/api/keyvault/secrets/get-secrets/get-secrets)
+- [List applications and application permissions](https://learn.microsoft.com/graph/api/application-list)
+- [Separate service principal collection](https://learn.microsoft.com/graph/api/serviceprincipal-list)

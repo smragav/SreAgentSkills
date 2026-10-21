@@ -16,6 +16,8 @@ az graph query -q "resources | where type =~ 'microsoft.compute/virtualmachines'
 
 Fix: deploy across availability zones, or place the virtual machine in an availability set for rack level redundancy.
 
+A placement field alone does not establish workload redundancy. The scanner also emits Unknown for zonal or availability set VMs until multiple healthy workload instances and actual failover are verified. One zonal VM is not a redundant workload.
+
 ## 2. Single instance scale set (Medium)
 
 A scale set running fewer than two instances has no instance level redundancy.
@@ -66,21 +68,21 @@ az graph query -q "resources | where type =~ 'microsoft.storage/storageaccounts'
 
 Fix: use ZRS for zone redundancy, or GRS and RA-GRS for regional redundancy where the data warrants it.
 
-## 7. Application Gateway not zone redundant (Medium)
+## 7. Application Gateway explicit single zone (Medium)
 
 ```
-az graph query -q "resources | where type =~ 'microsoft.network/applicationgateways' | where isnull(zones) or array_length(zones) == 0 | project name, id, resourceGroup, subscriptionId, location" --first 1000
+az graph query -q "resources | where type =~ 'microsoft.network/applicationgateways' | where tostring(sku.name) in~ ('Standard_v2','WAF_v2') | where array_length(zones) == 1 | project name, id, resourceGroup, subscriptionId, location" --first 1000
 ```
 
-Fix: redeploy the gateway across availability zones (v2 SKU).
+Review zone redundancy in the supported target region. Absent or empty `zones` does not mean no redundancy: new v2 gateways default to zone redundancy in supported regions. The separate Unknown signal asks for region, SKU, effective deployment and creation history evidence. It does not recommend a blind redeployment.
 
-## 8. AKS node pool without zones or a single node (Medium)
+## 8. AKS zone applicability (Unknown) and production system pool sizing (Medium)
 
 ```
-az graph query -q "resources | where type =~ 'microsoft.containerservice/managedclusters' | mv-expand pool = properties.agentPoolProfiles | extend zones = pool.availabilityZones, nodes = toint(pool['count']) | where isnull(zones) or array_length(zones) == 0 or nodes < 2 | project name, id, resourceGroup, subscriptionId, location, pool=tostring(pool.name)" --first 1000
+az graph query -q "resources | where type =~ 'microsoft.containerservice/managedclusters' | mv-expand pool = properties.agentPoolProfiles | project name, id, resourceGroup, subscriptionId, location, pool=tostring(pool.name), mode=tostring(pool.mode), nodes=toint(pool['count']), minimum=toint(pool.minCount), zones=pool.availabilityZones" --first 1000
 ```
 
-Fix: spread node pools across availability zones and run at least two nodes.
+Verify current region, VM SKU, zone availability and pod placement before recommending zones. Missing zones is Unknown until applicability is known. Production system pools should have at least three nodes, including the autoscaler minimum; two is a platform minimum. User pool counts require workload context.
 
 ## 9. Single region Cosmos DB account (Medium)
 
@@ -95,3 +97,13 @@ Fix: add a second region and enable automatic failover for regional resilience.
 - Backup protection coverage: check Azure Backup Center.
 - Live idle or underused resources: use the cost skill's idle detection.
 - Service level objective attainment: read Azure Resource Health history and Service Health for the affected resources when a finding needs corroboration.
+
+Configuration does not establish measured RTO, RPO, successful recovery or complete workload dependencies. No automatic severity adjustment is made from names.
+
+## Sources and validation
+
+- [Application Gateway v2 zone defaults](https://learn.microsoft.com/en-us/azure/reliability/reliability-application-gateway-v2), checked 2026-10-21.
+- [AKS system pool recommendation](https://learn.microsoft.com/en-us/azure/aks/use-system-pools), checked 2026-10-21.
+- [VM reliability](https://learn.microsoft.com/en-us/azure/reliability/reliability-virtual-machines).
+
+Offline regression tests only. Resource Graph query execution, live topology and failover are not validated by these tests.

@@ -33,11 +33,11 @@ az sql db ltr-policy show --resource-group <rg> --server <server> --name <db> --
 ## PostgreSQL and MySQL Flexible Server (engine: PostgreSQL or MySQL)
 
 ```
-az graph query -q "resources | where type in~ ('microsoft.dbforpostgresql/flexibleservers','microsoft.dbformysql/flexibleservers') | project name, id, type, subscriptionId, resourceGroup, properties" --first 1000
+az graph query -q "resources | where type in~ ('microsoft.dbforpostgresql/flexibleservers','microsoft.dbformysql/flexibleservers') | project name, id, type, subscriptionId, resourceGroup, location, sku, properties" --first 1000
 ```
 
-- High availability disabled (Medium). Fix: enable zone redundant high availability for production.
-- Geo redundant backup disabled (Medium). Fix: enable geo redundant backup where regional recovery is required (set at create time).
+- Explicit highAvailability.mode Disabled (Medium only when tier is known). Review eligible engine, compute tier, region, zones and capacity before planning HA. Missing mode or tier is Not assessed.
+- Explicit backup.geoRedundantBackup Disabled (Medium). PostgreSQL permits configuration only at server creation; plan a new server and tested migration or restore path when regional recovery is required. Verify MySQL change constraints separately rather than applying PostgreSQL rules to both engines.
 - Storage auto grow disabled (Low). Fix: enable auto grow to avoid a storage full outage.
 - Public network access enabled (Low). Fix: use private access (VNet integration) and disable public access.
 
@@ -53,4 +53,18 @@ az graph query -q "resources | where type =~ 'microsoft.documentdb/databaseaccou
 
 ## Severity
 
-Blast radius and likelihood drive severity. Raise a finding when the resource is clearly production; lower it when naming or tags mark it non production.
+Blast radius and likelihood drive severity. Do not infer workload criticality or downgrade a finding from a name alone.
+
+## Evidence limits
+
+Absent or null SQL zone settings, TLS, backup redundancy, Flexible Server HA, backup and storage settings, or Cosmos locations and failover settings are Unknown, not disabled or passing. SQL checks cover selected Premium and Business Critical configurations, not every SKU or capability. Resource Graph fields vary by engine and API version; missing data requires an approved service API read.
+
+Backup and replication configuration does not establish measured RTO or RPO, successful restore, replication lag or application recovery. Obtain business objectives, timed drills and workload dependency evidence separately.
+
+## Sources and validation
+
+- [PostgreSQL backup and restore](https://learn.microsoft.com/en-us/azure/postgresql/backup-restore/concepts-backup-restore), creation only geo backup rule checked 2026-10-21.
+- [SQL availability](https://learn.microsoft.com/en-us/azure/azure-sql/database/high-availability-sla-local-zone-redundancy).
+- [MySQL HA](https://learn.microsoft.com/en-us/azure/mysql/flexible-server/concepts-high-availability).
+
+Tests are offline fixtures. No live database or endpoint behavior was validated.

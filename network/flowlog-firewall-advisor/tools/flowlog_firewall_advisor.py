@@ -10,7 +10,7 @@ Azure imports are lazy so the analysis logic below can be unit tested without an
 Azure dependency or credential. See test_flowlog_firewall_advisor.py.
 
 Standard library plus azure-identity and requests at run time. Log Analytics is read
-over its REST API because azure-monitor-query is not present in the agent runtime.
+over its REST API. Validate dependencies in the selected host before execution.
 """
 
 import argparse
@@ -20,9 +20,19 @@ import os
 import sys
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+import re
+
+_TOOLS_DIR = Path(__file__).resolve().parent
+for _candidate in (_TOOLS_DIR, _TOOLS_DIR / "tools", *(parent / "shared" / "tools" for parent in _TOOLS_DIR.parents)):
+    if (_candidate / "azure_http.py").is_file():
+        if str(_candidate) not in sys.path:
+            sys.path.insert(0, str(_candidate))
+        break
+from sharing import sanitized_copy
 
 # Documented Azure Firewall policy limit. Unique source and destination combinations
-# in network rules is (sources) * (destinations) * (protocols) * (ports), summed over
+# in network rules is protocols * sources * destinations * ceil(ports / 14), summed over
 # every network rule in the policy.
 # https://learn.microsoft.com/azure/azure-resource-manager/management/azure-subscription-service-limits
 RULE_COMBINATION_LIMIT = 20000
@@ -47,6 +57,11 @@ TUPLE_QUERY_ROW_LIMIT = 200000
 # A rule set built from partial data looks exactly like one built from complete data,
 # so the difference has to be carried into the report rather than inferred.
 TRUNCATION = []
+SKIPPED_WORKSPACES = []
+SOURCES = [
+    {"title": "Azure Firewall rule limits", "url": "https://learn.microsoft.com/azure/azure-resource-manager/management/azure-subscription-service-limits#azure-firewall-limits"},
+    {"title": "Traffic Analytics scope columns", "url": "https://learn.microsoft.com/azure/azure-monitor/reference/tables/ntanetanalytics"},
+]
 
 ARG_FLOWLOG_QUERY = """
 resources
@@ -186,6 +201,31 @@ def port_expression_count(expressions):
         else:
             total += 1
     return total
+
+
+def rule_combinations(protocol_count, source_count, destination_count, port_count):
+    """Documented network rule budget, with destination ports grouped in 14s."""
+    return protocol_count * source_count * destination_count * ((port_count + 13) // 14)
+
+
+def scoped_query(query, subscription="", targets=()):
+    """Filter the logging target, not merely an endpoint or report label."""
+    filters = []
+    if subscription:
+        if not re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", subscription):
+            raise ValueError("--subscription must be a subscription GUID")
+        filters.append("| where tolower(TargetResourceId) startswith '/subscriptions/%s/'" % subscription.lower())
+    if targets:
+        clauses = []
+        for target in targets:
+            if not re.fullmatch(r"/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[A-Za-z0-9_.()-]+/providers/Microsoft.Network/virtualNetworks/[A-Za-z0-9_.()-]+(?:/subnets/[A-Za-z0-9_.()-]+)?", target, re.I):
+                raise ValueError("--target-resource must be a full VNet or subnet resource ID")
+            target = target.lower().rstrip("/")
+            if subscription and not target.startswith("/subscriptions/" + subscription.lower() + "/"):
+                raise ValueError("The target resource must belong to --subscription")
+            clauses.append("(tolower(TargetResourceId) == '%s' or tolower(TargetResourceId) startswith '%s/')" % (target, target))
+        filters.append("| where " + " or ".join(clauses))
+    return query.replace("| where SubType =~ 'FlowLog'", "| where SubType =~ 'FlowLog'\n" + "\n".join(filters), 1)
 
 
 def build_denied_keys(tuples):
@@ -354,7 +394,7 @@ def build_rules(tuples, min_flows=1, collapse_threshold=4):
             collapsed_all.extend(dest_collapsed)
 
         port_expressions = merge_port_ranges(ports)
-        combinations += len(source_list) * len(destination_list) * port_expression_count(port_expressions)
+        combinations += rule_combinations(1, len(source_list), len(destination_list), port_expression_count(port_expressions))
 
         counters[axis] += 1
         severity, reason = classify(source_list, destination_list, port_expressions, is_tag, axis)
@@ -400,8 +440,10 @@ def human_bytes(value):
     return "%.1f TB" % value
 
 
-def build_report(analysis, meta):
+def build_report(analysis, meta, include_identifiers=False):
     """Shape the analysis into the report_data object the shared renderer expects."""
+    safe = sanitized_copy({"analysis": analysis, "meta": meta}, include_identifiers=include_identifiers)
+    analysis, meta = safe["analysis"], safe["meta"]
     rules = analysis["rules"]
     excluded = analysis["excluded"]
     combinations = analysis["combinations"]
@@ -475,7 +517,9 @@ def build_report(analysis, meta):
         % excluded["platform"],
         "Network rules only. Application rules need fully qualified domain names, which IP flow logs "
         "do not carry. Public destinations stay IP literals unless a service tag was resolved.",
-        "Deploy any derived rule set in a non enforcing mode alongside the current policy first.",
+        "Keep this as a draft. Test intended allow and deny paths in an isolated staging environment, obtain owner approval, then use a controlled deployment with rollback. No universal non enforcing mode is assumed.",
+        "Only the explicitly selected workspace is queried. Other workspaces are not assessed. TargetResourceId filters constrain the logging VNet or subnet, not every resource with an endpoint in that subscription.",
+        "Policy budget = protocol count * source count * destination count * ceil(destination port count / 14), summed per rule. Existing policy rules consume additional budget.",
     ]
     if analysis["collapsed"]:
         notes.insert(2, "%s address group(s) were widened from observed hosts to a /24 and now permit "
@@ -492,6 +536,10 @@ def build_report(analysis, meta):
         notes.insert(0, "Incomplete data. %s" % reason)
 
     return {
+        "assessment_status": "Partial" if TRUNCATION or SKIPPED_WORKSPACES else "Complete",
+        "sources": SOURCES,
+        "sharing_review": safe["sharing_review"],
+        "skipped_workspaces": sanitized_copy({"items": SKIPPED_WORKSPACES}, include_identifiers=include_identifiers)["items"],
         "title": "Flow log firewall advisor",
         "subtitle": "Azure Firewall network rules derived from observed virtual network traffic",
         "meta": {"window": meta.get("window", ""), "scope": meta.get("scope", ""),
@@ -562,22 +610,36 @@ def identity_report(client_id=None):
     ))
 
 
-def discover_workspaces(client_id=None):
+def discover_workspaces(client_id=None, subscription="", targets=()):
     """Workspaces receiving VNet flow logs, grouped and ranked by enabled flow logs."""
-    import requests
+    import azure_http as requests
 
     token = _credential(client_id).get_token("https://management.azure.com/.default").token
+    payload = {"query": ARG_FLOWLOG_QUERY, "options": {"resultFormat": "objectArray", "top": 1000}}
+    if subscription:
+        scoped_query(COVERAGE_QUERY, subscription, targets)
+        payload["subscriptions"] = [subscription]
     response = requests.post(
         "https://management.azure.com/providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01",
         headers={"Authorization": "Bearer %s" % token, "Content-Type": "application/json"},
-        json={"query": ARG_FLOWLOG_QUERY, "options": {"resultFormat": "objectArray"}},
+        json=payload,
         timeout=120,
     )
     response.raise_for_status()
 
+    body = response.json()
+    if not isinstance(body.get("data"), list):
+        raise ValueError("Incomplete workspace discovery response: data missing")
+    if body.get("$skipToken") or str(body.get("resultTruncated", "")).lower() == "true":
+        TRUNCATION.append("Workspace discovery is incomplete: Resource Graph first page only (1000 row cap).")
     grouped = defaultdict(lambda: {"enabled": 0, "total": 0})
-    for row in response.json().get("data", []):
-        if not row.get("trafficAnalyticsEnabled") or not row.get("workspaceCustomerId"):
+    for row in body.get("data", []):
+        if targets and not any((row.get("targetResourceId") or "").lower().rstrip("/") == t.lower().rstrip("/")
+                               or (row.get("targetResourceId") or "").lower().startswith(t.lower().rstrip("/") + "/") for t in targets):
+            continue
+        if not row.get("trafficAnalyticsEnabled") or not row.get("workspaceCustomerId") or not row.get("flowLogEnabled"):
+            SKIPPED_WORKSPACES.append({"workspace_resource_id": row.get("workspaceResourceId", ""), "target_resource_id": row.get("targetResourceId", ""),
+                                       "reason": "Traffic Analytics disabled, workspace ID missing or flow log disabled"})
             continue
         entry = grouped[(row["workspaceCustomerId"], row.get("workspaceResourceId", ""))]
         entry["total"] += 1
@@ -614,7 +676,7 @@ def query_workspace(workspace_id, query, start, end, client_id=None):
     result set with HTTP 200 and a populated error node, not with a failure status,
     so a caller that only reads the tables silently loses rows.
     """
-    import requests
+    import azure_http as requests
 
     token = _credential(client_id).get_token("https://api.loganalytics.io/.default").token
     response = requests.post(
@@ -641,7 +703,7 @@ def query_workspace(workspace_id, query, start, end, client_id=None):
 
     tables = payload.get("tables") or []
     if not tables:
-        return []
+        raise RuntimeError("Incomplete Log Analytics response: result tables are missing")
     columns = [column["name"] for column in tables[0].get("columns") or []]
     rows = [dict(zip(columns, row)) for row in tables[0].get("rows") or []]
 
@@ -655,16 +717,24 @@ def query_workspace(workspace_id, query, start, end, client_id=None):
 
 
 def main(argv=None):
+    TRUNCATION.clear()
+    SKIPPED_WORKSPACES.clear()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--discover", action="store_true", help="list workspaces receiving VNet flow logs")
     parser.add_argument("--coverage", action="store_true", help="report what the workspace actually holds")
     parser.add_argument("--workspace", help="Log Analytics workspace GUID")
     parser.add_argument("--days", type=int, default=7, help="lookback window in days")
     parser.add_argument("--min-flows", type=int, default=1, help="ignore connections seen fewer times than this")
-    parser.add_argument("--subscription", default="", help="subscription label for the report")
+    parser.add_argument("--subscription", default="", help="subscription GUID of the logging target, filters collection")
+    parser.add_argument("--target-resource", action="append", default=[], help="full VNet or subnet ID, repeat to include multiple logging targets")
+    parser.add_argument("--include-identifiers", action="store_true", help="include identifiers in the internal draft; credentials remain redacted")
     parser.add_argument("--client-id", default="", help="managed identity client id to authenticate as")
     parser.add_argument("--whoami", action="store_true", help="print the identity each Azure audience resolves to")
     args = parser.parse_args(argv)
+    if args.days < 1 or args.min_flows < 1:
+        parser.error("--days and --min-flows must be positive")
+    query = scoped_query(TUPLE_QUERY, args.subscription, args.target_resource)
+    coverage_query = scoped_query(COVERAGE_QUERY, args.subscription, args.target_resource)
     client_id = args.client_id or os.environ.get("AZURE_CLIENT_ID") or resolve_agent_identity()
 
     if args.whoami:
@@ -672,7 +742,15 @@ def main(argv=None):
         return 0
 
     if args.discover:
-        print(json.dumps({"workspaces": discover_workspaces(client_id)}, indent=2))
+        try:
+            workspaces = discover_workspaces(client_id, args.subscription, args.target_resource)
+        except Exception:
+            workspaces = []
+            TRUNCATION.append("Workspace discovery failed; workspace coverage is unknown.")
+        result = {"workspaces": workspaces, "skipped_workspaces": SKIPPED_WORKSPACES,
+                  "assessment_status": "Not assessed" if not workspaces else ("Partial" if TRUNCATION or SKIPPED_WORKSPACES else "Complete"),
+                  "method_notes": TRUNCATION, "sources": SOURCES}
+        print(json.dumps(sanitized_copy(result, include_identifiers=args.include_identifiers), indent=2))
         return 0
 
     if not args.workspace:
@@ -681,7 +759,11 @@ def main(argv=None):
     now = datetime.now(timezone.utc)
 
     if args.coverage:
-        rows = query_workspace(args.workspace, COVERAGE_QUERY, now - timedelta(days=400), now, client_id)
+        try:
+            rows = query_workspace(args.workspace, coverage_query, now - timedelta(days=400), now, client_id)
+        except Exception:
+            rows = []
+            TRUNCATION.append("Selected workspace query failed; data coverage is unknown.")
         summary = rows[0] if rows else {}
         records = int(summary.get("Records") or 0)
         last_seen = summary.get("LastSeenUtc")
@@ -689,11 +771,14 @@ def main(argv=None):
         if last_seen:
             stale_hours = round((now - _parse_utc(last_seen)).total_seconds() / 3600.0, 1)
         print(json.dumps({
-            "records": records,
+            "assessment_status": "Partial" if TRUNCATION else "Complete",
+            "sources": SOURCES,
+            "method_notes": TRUNCATION,
+            "records": records if not TRUNCATION else None,
             "first_seen": str(summary.get("FirstSeenUtc") or ""),
             "last_seen": str(last_seen or ""),
             "stale_hours": stale_hours,
-            "verdict": "Empty" if records == 0 else ("Stale" if (stale_hours or 0) > 3 else "Ok"),
+            "verdict": "Unknown" if TRUNCATION else ("Empty" if records == 0 else ("Stale" if (stale_hours or 0) > 3 else "Ok")),
         }, indent=2))
         return 0
 
@@ -701,16 +786,21 @@ def main(argv=None):
     # Traffic Analytics ingests in batches, so every record in the newest batch shares a
     # TimeGenerated. Ending exactly at the last record drops that whole batch, because the
     # query interval excludes its upper bound. A minute of margin keeps the newest traffic.
-    tuples = query_workspace(args.workspace, TUPLE_QUERY, start, now + timedelta(minutes=1), client_id)
+    try:
+        tuples = query_workspace(args.workspace, query, start, now + timedelta(minutes=1), client_id)
+    except Exception:
+        tuples = []
+        SKIPPED_WORKSPACES.append({"workspace": args.workspace, "reason": "Query failed; traffic and rules not assessed"})
+        TRUNCATION.append("Selected workspace query failed. No empty or complete traffic conclusion is possible.")
 
     analysis = build_rules(tuples, min_flows=args.min_flows)
     report = build_report(analysis, {
         "window": "%s to %s UTC (%s days)" % (start.strftime("%Y-%m-%d %H:%M"),
-                                              now.strftime("%Y-%m-%d %H:%M"), args.days),
-        "scope": "workspace %s" % args.workspace,
+                                              (now + timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M"), args.days),
+        "scope": "workspace %s; target subscription %s; targets %s" % (args.workspace, args.subscription or "all in workspace", ", ".join(args.target_resource) or "all in workspace"),
         "subscription": args.subscription,
         "tuple_count": len(tuples),
-    })
+    }, include_identifiers=args.include_identifiers)
     print(json.dumps(report))
     return 0
 

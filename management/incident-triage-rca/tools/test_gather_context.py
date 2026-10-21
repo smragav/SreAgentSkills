@@ -34,9 +34,38 @@ def test_build_timeline_newest_first_and_banded():
     assert timeline[1]["severity"] == "High"
 
 
+def test_collection_follows_activity_and_health_continuation(monkeypatch):
+    responses = iter([{"value": [{"id": "one"}], "nextLink": "next"}, {"value": [{"id": "two"}]}])
+    monkeypatch.setattr(gc, "_get", lambda *args: next(responses))
+    notes = []
+    assert len(gc._read_pages({}, "first", "Activity Log", notes)) == 2
+    assert notes == []
+
+
+def test_cap_and_failure_are_visible_incomplete_states(monkeypatch):
+    monkeypatch.setattr(gc, "_get", lambda *args: {"value": [{"id": "one"}], "nextLink": "next"})
+    notes = []
+    gc._read_pages({}, "first", "Resource Health", notes, max_pages=1)
+    assert "Incomplete" in notes[0] and "cap" in notes[0]
+    def fail(*args):
+        raise RuntimeError("denied")
+    monkeypatch.setattr(gc, "_get", fail)
+    notes = []
+    assert gc._read_pages({}, "first", "Resource Health", notes) == []
+    assert "Incomplete" in notes[0]
+
+
+def test_neighbor_graph_truncation_is_explicit(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    response = SimpleNamespace(status_code=200, headers={}, close=lambda: None, raise_for_status=lambda: None,
+                               json=lambda: {"data": [{"id": "one"}], "resultTruncated": True})
+    monkeypatch.setitem(sys.modules, "requests", SimpleNamespace(post=lambda *a, **kw: response))
+    notes = []
+    assert gc._run_graph({}, "query", notes) == [{"id": "one"}]
+    assert "truncated" in notes[0]
+
+
 if __name__ == "__main__":
-    for name, function in sorted(globals().items()):
-        if name.startswith("test_") and callable(function):
-            function()
-            print(f"ok {name}")
-    print("all gather_context tests passed")
+    import pytest
+    raise SystemExit(pytest.main([__file__]))

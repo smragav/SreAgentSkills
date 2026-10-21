@@ -44,11 +44,10 @@ inverted on purpose:
 | Critical | Low | Do not adopt this rule without a decision |
 | High | Medium | Adopt only once the destination is understood |
 | Medium | High | Adopt, consider narrowing |
-| Low | Very high | Safe to adopt as observed |
+| Low | Very high | Lower review priority, still requires intent validation and staging tests |
 
-Confidence here means confidence that the rule can be adopted as written, not
-confidence that the traffic occurred. The traffic always occurred; that is what a flow
-log is.
+These are heuristic review labels, not proof that a rule is safe to adopt.
+Flow records do not establish business intent, application delivery or completeness.
 
 ## Method notes always included
 
@@ -61,4 +60,6 @@ imply a completeness the data cannot support:
 - The count of platform flows excluded.
 - That these are network rules only, and application rules need names the flow logs do
   not carry.
-- That any derived rule set should first be deployed in a non enforcing mode.
+- That derived rules remain drafts until isolated staging tests, owner approval and a controlled deployment with rollback.
+- The exact policy budget formula: `protocolCount * sourceCount * destinationCount * ceil(portCount / 14)`.
+- Assessment status, source URLs, actual logging target filters and skipped workspaces.

@@ -22,17 +22,25 @@ Use this skill when the user asks to:
 ## Operating principles
 
 - Read only. This skill reads usage and quota counters. It never requests or changes a quota; it recommends where to request an increase.
-- Default Reader scope. It reads the usage endpoints for the subscriptions this agent can read, in the regions those subscriptions actually use. If a read is denied, it records the scope as not assessed and continues. See references/permissions-and-scope.md.
+- Approved read scope. It reads the usage endpoints for the subscriptions this agent can read, in the regions those subscriptions actually use. If a read is denied, it records the scope as not assessed and continues. See references/permissions-and-scope.md.
 - Evidence first. Every finding carries the subscription, the region, the quota name, the used and limit values, the utilization percent, and a severity from that utilization.
 
 ## Workflow
 
-The scan tool (tools/quota_scan.py) and the shared report renderer (tools/report_render.py) are bundled with this skill. Run them with RunInTerminal using the Python in the agent runtime. Both authenticate with the agent managed identity.
+The scan tool (tools/quota_scan.py) and the shared report renderer (tools/report_render.py) are bundled with this skill. Run them with RunInTerminal using the Python in the agent runtime. The collector uses the configured identity; the local renderer does not authenticate to Azure.
 
 ### Phase 1: Read usage counters
 
 1. Run python tools/quota_scan.py with RunInTerminal. It finds the regions each subscription uses with Azure Resource Graph, reads the compute, network, and storage usage counters in those regions, and prints a report_data object as JSON.
 2. It flags any counter at or above the threshold (80 percent by default) and assigns a severity from the utilization, following references/checks-catalog.md. Pass a lower threshold as an argument for an earlier warning.
+
+### Coverage and limits
+
+Confirm the approved scope and select the identity explicitly with `AZURE_CLIENT_ID`, or `SRE_IDENTITY_MODE=system-assigned`. Local credentials require `SRE_IDENTITY_MODE=developer`. These instructions do not enforce host access.
+
+Compute, network and storage usage are read per observed subscription and region. Storage uses the regional `Microsoft.Storage/locations/<region>/usages` endpoint. Missing, invalid, nonpositive or unlimited limits do not prove spare capacity. JSON exposes per endpoint `assessments`, `assessment_status` and `sources`. Failed or empty reads cannot produce Complete; an empty scope is Not assessed.
+
+Only selected usage counters are covered. This is not every quota, a subscription deployment validation or a guarantee of regional SKU capacity. Compare planned resource demand with actual headroom separately. No quota is increased by this tool.
 
 ### Phase 2: Produce the report
 
@@ -41,10 +49,26 @@ The scan tool (tools/quota_scan.py) and the shared report renderer (tools/report
 
 ## Scenario coverage
 
-This skill also answers 1 customer scenario in the Resource Organization category (subscription limits approaching). Open references/scenarios.md when the ask matches it: it holds the sample prompt, the run mode, and whether the skill covers it with built in checks or a guided read only prompt.
+This skill implements its documented checks, not every related scenario. Use the related skills for their complete evidence workflows. See [scenario routing](./references/scenarios.md).
+
 
 ## Expected output
 
 - Primary: a self contained HTML headroom report, covering counters near their limit by severity, the tightest counters, and the full table with used, limit, and utilization per counter.
 - Inline: counters near the limit, the Critical count, and the tightest counters with the region and the quota name.
 - Every finding carries the subscription, region, quota name, used and limit values, utilization percent, and a severity. The skill requests no increase; it points to where an increase is needed.
+
+## Sources
+
+- [Storage usages by location API](https://learn.microsoft.com/en-us/rest/api/storagerp/usages/list-by-location?view=rest-storagerp-2023-05-01), endpoint checked 2026-10-21.
+- [View quotas](https://learn.microsoft.com/en-us/azure/quotas/view-quotas).
+
+Offline tests validate endpoint construction and coverage states. No quota or live resource endpoint was queried.
+
+## Assessment and customer sharing
+
+Confirm the explicit customer scope and UTC window before collection. Accessible resources are not automatically approved scope. For a tool that enumerates all visible subscriptions, use an identity restricted to the approved scope or the related skill's scoped commands.
+
+Follow [assessment states and limits](./references/assessment-contract.md), [permissions](./references/permissions-and-scope.md), and [customer sharing review](./references/customer-sharing.md), bundled during deployment. The shared renderer produces a sanitized draft by default; `--include-identifiers` requires an explicitly approved customer audience. Review custom exports with the same checklist.
+
+Configure the host using [governance settings](./references/governance.json). General terminal access is not inherently read only. Never apply changes, schedule work, upload files or send messages without separate explicit approval.

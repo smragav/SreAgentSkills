@@ -22,12 +22,12 @@ Use this skill when the user asks to:
 ## Operating principles
 
 - Read only. This skill never changes a resource. It proposes recommendations with the exact configuration change, but a human reviews and applies them.
-- Default Reader scope. It analyzes the subscriptions and resource groups this agent can already read. If a read returns access denied, it may ask the user to grant temporary access, but it never assigns roles itself. If the user declines, it records the scope as not assessed and continues. See references/permissions-and-scope.md.
+- Approved read scope. It analyzes the subscriptions and resource groups this agent can already read. If a read returns access denied, it may ask the user to grant temporary access, but it never assigns roles itself. If the user declines, it records the scope as not assessed and continues. See references/permissions-and-scope.md.
 - Evidence first. Every finding carries the resource id, the reliability signal that fired, a severity, and the recommended change. Severity reflects blast radius and likelihood, not effort.
 
 ## Workflow
 
-The scan tool (tools/reliability_scan.py) and the shared report renderer (tools/report_render.py) are bundled with this skill. Run them with the RunInTerminal tool using the Python in the agent runtime, which already has azure-identity and requests. The renderer uses only the standard library. Both authenticate with the agent managed identity. Follow three phases.
+The scan tool (tools/reliability_scan.py) and the shared report renderer (tools/report_render.py) are bundled with this skill. Run them with the RunInTerminal tool using the Python in the agent runtime, after verifying that the host provides approved azure-identity and requests packages. The renderer uses only the standard library. The collector uses the configured identity; the local renderer does not authenticate to Azure. Follow three phases.
 
 ### Phase 1: Scan for reliability signals
 
@@ -37,7 +37,11 @@ The scan tool (tools/reliability_scan.py) and the shared report renderer (tools/
 
 ### Phase 2: Confirm severity and scope
 
-Review the findings the tool returned against references/scoring-method.md. Severity bands are Critical, High, Medium, and Low. Promote or lower a finding only with evidence, for example lowering a single instance virtual machine to Low when its name marks it as a lab or sandbox.
+Review the findings against references/scoring-method.md. Severity bands are Critical, High, Medium and Low; Unknown means insufficient assessment evidence, not a pass. Never downgrade a resource purely because its name contains dev, test, lab or another environment hint. Any manual criticality adjustment requires owner validated workload context.
+
+Application Gateway v2 with absent zones is not automatically nonredundant. Current documentation says new v2 gateways default to zone redundancy in supported regions. Verify effective regional deployment and history; the scanner records this as Unknown rather than a false redundancy gap. One zonal VM or availability set membership is not proof of multiple workload instances or failover.
+
+Configure the selected identity with `AZURE_CLIENT_ID`, or explicitly `SRE_IDENTITY_MODE=system-assigned`. Local credentials require explicit `SRE_IDENTITY_MODE=developer`. Confirm approved scope before collection; playbook gates do not enforce host access. Reports expose `assessment_status` and `sources`; failures, unknown applicability and empty visibility never produce Complete.
 
 ### Phase 3: Produce the scorecard
 
@@ -50,10 +54,27 @@ Only if the user asks, file tracking issues from the highest severity findings. 
 
 ## Scenario coverage
 
-This skill also answers 3 customer scenarios in the Management category (RTO and RPO gaps, backup policy compliance, SKU reliability). Open references/scenarios.md when the ask matches one of them: it holds the sample prompt, the run mode, and whether the skill covers it with built in checks or a guided read only prompt.
+This skill implements its documented checks, not every related scenario. Use the related skills for their complete evidence workflows. See [scenario routing](./references/scenarios.md).
+
 
 ## Expected output
 
 - Primary: a single self contained HTML resilience scorecard delivered as a file link, covering findings by severity, findings by subscription, and the full finding table with the recommended change per resource.
 - Inline: a short summary with resources affected, findings by severity, and the top recommendations.
 - Every finding includes the resource id, the reliability signal, a severity, and the exact recommended configuration change. Nothing is changed; recommendations are proposals for a human to apply.
+
+## Sources
+
+- [Application Gateway v2 reliability](https://learn.microsoft.com/en-us/azure/reliability/reliability-application-gateway-v2), default zone behavior checked 2026-10-21.
+- [VM reliability](https://learn.microsoft.com/en-us/azure/reliability/reliability-virtual-machines).
+- [AKS system pools](https://learn.microsoft.com/en-us/azure/aks/use-system-pools).
+
+Offline tests cover rule construction and mocked reads. No actual redundancy, workload topology, RTO, RPO or live failover was validated.
+
+## Assessment and customer sharing
+
+Confirm the explicit customer scope and UTC window before collection. Accessible resources are not automatically approved scope. For a tool that enumerates all visible subscriptions, use an identity restricted to the approved scope or the related skill's scoped commands.
+
+Follow [assessment states and limits](./references/assessment-contract.md), [permissions](./references/permissions-and-scope.md), and [customer sharing review](./references/customer-sharing.md), bundled during deployment. The shared renderer produces a sanitized draft by default; `--include-identifiers` requires an explicitly approved customer audience. Review custom exports with the same checklist.
+
+Configure the host using [governance settings](./references/governance.json). General terminal access is not inherently read only. Never apply changes, schedule work, upload files or send messages without separate explicit approval.

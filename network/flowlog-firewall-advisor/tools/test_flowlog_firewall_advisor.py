@@ -21,6 +21,8 @@ from flowlog_firewall_advisor import (
     flow_axis,
     merge_port_ranges,
     port_expression_count,
+    rule_combinations,
+    scoped_query,
     service_tag_for,
     summarise_addresses,
 )
@@ -64,6 +66,14 @@ class TestPortHandling(unittest.TestCase):
 
     def test_range_counts_every_port_it_spans(self):
         self.assertEqual(port_expression_count(["80", "443-445"]), 4)
+
+    def test_documented_rule_budget_groups_destination_ports_in_fourteens(self):
+        for port_count, groups in ((1, 1), (14, 1), (15, 2), (28, 2), (29, 3)):
+            self.assertEqual(rule_combinations(2, 3, 5, port_count), 2 * 3 * 5 * groups)
+
+    def test_build_rules_uses_documented_divisor_for_expanded_port_range(self):
+        rows = [tuple_row("10.0.0.1", "10.0.1.1", p) for p in range(80, 95)]
+        self.assertEqual(build_rules(rows)["combinations"], 2)
 
 
 class TestAddressSummary(unittest.TestCase):
@@ -261,6 +271,83 @@ class TestTruncationReporting(unittest.TestCase):
     def test_no_truncation_leaves_notes_alone(self):
         report = build_report(build_rules([]), {"window": "7 days", "scope": "t", "tuple_count": 0})
         self.assertFalse(report["method_notes"][0].startswith("Incomplete data."))
+
+
+def test_subscription_and_vnet_filters_constrain_workspace_query():
+    from flowlog_firewall_advisor import TUPLE_QUERY, COVERAGE_QUERY
+    sub = "11111111-1111-1111-1111-111111111111"
+    target = f"/subscriptions/{sub}/resourceGroups/rg/providers/Microsoft.Network/virtualNetworks/vnet"
+    for base in (TUPLE_QUERY, COVERAGE_QUERY):
+        query = scoped_query(base, sub, [target])
+        assert "tolower(TargetResourceId) startswith '/subscriptions/" in query
+        assert target.lower() in query
+        assert query.index("TargetResourceId") < query.index("| summarize")
+
+
+def test_invalid_scope_cannot_inject_kql():
+    import pytest
+    with pytest.raises(ValueError):
+        scoped_query("query", "invalid' | take 1")
+
+
+def test_report_sanitizes_commands_and_requires_review():
+    analysis = build_rules([tuple_row("10.42.1.4", "10.42.2.4", 443)])
+    report = build_report(analysis, {"scope": "test", "token": "secret-value"})
+    assert "10.42.1.4" not in str(report)
+    assert "secret-value" not in str(report)
+    assert "human review required" in report["sharing_review"]["status"]
+    internal = build_report(analysis, {"scope": "test"}, include_identifiers=True)
+    assert "10.42.1.4" in internal["candidates"][0]["command"]
+    assert not any("non enforcing mode alongside" in note for note in internal["method_notes"])
+
+
+def test_failed_workspace_is_reported_as_skipped_not_complete(monkeypatch, capsys):
+    import json
+    import flowlog_firewall_advisor as advisor
+    monkeypatch.setattr(advisor, "resolve_agent_identity", lambda: None)
+    def fail(*args):
+        raise RuntimeError("denied")
+    monkeypatch.setattr(advisor, "query_workspace", fail)
+    try:
+        advisor.main(["--workspace", "workspace-guid"])
+        report = json.loads(capsys.readouterr().out)
+        assert report["assessment_status"] == "Partial"
+        assert report["skipped_workspaces"]
+        assert any("query failed" in note.lower() for note in report["method_notes"])
+    finally:
+        advisor.TRUNCATION.clear()
+        advisor.SKIPPED_WORKSPACES.clear()
+
+
+def test_discovery_scopes_subscription_and_reports_skipped_workspaces(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    import flowlog_firewall_advisor as advisor
+    sub = "11111111-1111-1111-1111-111111111111"
+    payloads = []
+    monkeypatch.setattr(advisor, "_credential", lambda *a: SimpleNamespace(get_token=lambda *a: SimpleNamespace(token="fixture-token")))
+    response = SimpleNamespace(status_code=200, headers={}, close=lambda: None, raise_for_status=lambda: None, json=lambda: {"data": [
+        {"flowLogEnabled": True, "trafficAnalyticsEnabled": True, "workspaceCustomerId": "selected"},
+        {"flowLogEnabled": False, "trafficAnalyticsEnabled": True, "workspaceCustomerId": "skipped"}]})
+    def post(url, **kwargs):
+        payloads.append(kwargs["json"])
+        return response
+    monkeypatch.setitem(sys.modules, "requests", SimpleNamespace(post=post))
+    try:
+        workspaces = advisor.discover_workspaces(subscription=sub)
+        assert payloads[0]["subscriptions"] == [sub]
+        assert len(workspaces) == 1 and workspaces[0]["workspace_customer_id"] == "selected"
+        assert advisor.SKIPPED_WORKSPACES
+    finally:
+        advisor.SKIPPED_WORKSPACES.clear()
+
+
+def test_target_subscription_mismatch_is_rejected_before_query():
+    import pytest
+    sub = "11111111-1111-1111-1111-111111111111"
+    target = "/subscriptions/22222222-2222-2222-2222-222222222222/resourceGroups/rg/providers/Microsoft.Network/virtualNetworks/vnet"
+    with pytest.raises(ValueError, match="belong"):
+        scoped_query("query", sub, [target])
 
 
 if __name__ == "__main__":

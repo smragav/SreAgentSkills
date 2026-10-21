@@ -1,5 +1,5 @@
 """
-pattern_scan: Rank recurring incident repeat offenders over a window.
+pattern_scan: Rank recurring alert and health signals over a window.
 
 Azure SRE Agent Python tool. Uses the agent managed identity (ARM scope) to read
 fired alerts and resource health degradations across accessible subscriptions,
@@ -15,10 +15,24 @@ can be unit tested without them. See references/checks-catalog.md.
 import json
 import sys
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlencode
+from pathlib import Path
+
+_TOOLS_DIR = Path(__file__).resolve().parent
+for _candidate in (_TOOLS_DIR, _TOOLS_DIR / "tools", *(parent / "shared" / "tools" for parent in _TOOLS_DIR.parents)):
+    if (_candidate / "azure_http.py").is_file():
+        if str(_candidate) not in sys.path:
+            sys.path.insert(0, str(_candidate))
+        break
 
 ARM_ENDPOINT = "https://management.azure.com"
 SEVERITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
 REPEAT_THRESHOLD = 3
+SOURCES = [
+    {"title": "Alert instance retention", "url": "https://learn.microsoft.com/azure/azure-monitor/alerts/alerts-manage-alert-instances"},
+    {"title": "Activity Log", "url": "https://learn.microsoft.com/azure/azure-monitor/essentials/activity-log"},
+    {"title": "Alert query custom time range", "url": "https://learn.microsoft.com/python/api/azure-mgmt-alertsmanagement/azure.mgmt.alertsmanagement.operations.alertsoperations"},
+]
 
 
 def resource_type_from_id(resource_id):
@@ -37,7 +51,7 @@ def _name(resource_id):
 
 
 def severity_by_count(count):
-    """Severity band from an incident count. Pure and testable."""
+    """Heuristic review priority from a signal count, not incident impact."""
     if count >= 10:
         return "High"
     if count >= 5:
@@ -80,7 +94,7 @@ def build_report_data(agg, window_label, subs_scanned, threshold, notes):
     for entry in offenders:
         severity = severity_by_count(entry["count"])
         findings.append({
-            "resource": entry["name"], "resource_type": entry["type"], "incidents": entry["count"],
+            "resource": entry["name"], "resource_type": entry["type"], "signal_count": entry["count"],
             "signals": f"{entry['alerts']} alert(s), {entry['health']} health degradation(s)",
             "recommendation": "Review redundancy and dependencies for a resource that keeps degrading; tune the workload or threshold for one that keeps alerting.",
             "severity": severity, "_band": severity, "_sort": entry["count"],
@@ -92,30 +106,32 @@ def build_report_data(agg, window_label, subs_scanned, threshold, notes):
     for entry in agg.values():
         by_type[entry["type"]] = by_type.get(entry["type"], 0) + entry["count"]
     type_items = sorted(({"name": k, "value": v} for k, v in by_type.items()), key=lambda i: i["value"], reverse=True)[:10]
-    top_items = [{"name": f["resource"], "value": f["incidents"]} for f in findings[:10]]
+    top_items = [{"name": f["resource"], "value": f["signal_count"]} for f in findings[:10]]
 
     return {
+        "assessment_status": "Not assessed" if subs_scanned == 0 else ("Partial" if notes else "Complete"),
+        "sources": SOURCES,
         "title": "Recurring Incident Patterns",
-        "subtitle": "Repeat offenders over the window.",
+        "subtitle": "Repeated alert and health signals, not a count of distinct incidents.",
         "meta": {"window": window_label, "scope": f"{subs_scanned} subscription(s)", "source": "Azure Monitor alerts and Resource Health"},
         "summary_cards": [
-            {"label": "Total incidents", "value": f"{total_incidents:,}"},
-            {"label": "Repeat offenders", "value": f"{len(offenders):,}", "sub": f"{threshold}+ incidents"},
+            {"label": "Resource signal occurrences", "value": f"{total_incidents:,}"},
+            {"label": "Repeat offenders", "value": f"{len(offenders):,}", "sub": f"{threshold}+ signals"},
             {"label": "Resources affected", "value": f"{len(agg):,}"},
             {"label": "Window", "value": window_label},
         ],
         "charts": [
-            {"title": "Incidents by resource type", "unit": "incidents", "items": type_items},
-            {"title": "Top repeat offenders", "unit": "incidents", "items": top_items},
+            {"title": "Signals by resource type", "unit": "signals", "items": type_items},
+            {"title": "Top repeat offenders", "unit": "signals", "items": top_items},
         ],
         "findings": {
             "title": "Repeat offenders",
-            "columns": ["resource", "resource_type", "incidents", "signals", "recommendation", "severity"],
+            "columns": ["resource", "resource_type", "signal_count", "signals", "recommendation", "severity"],
             "rows": findings,
         },
         "method_notes": notes + [
-            f"Window: {window_label}. Repeat threshold: {threshold} incidents.",
-            "Incident count is fired alerts plus resource health degradations over the window.",
+            f"Window: {window_label}. Repeat threshold: {threshold} signals.",
+            "Counts are resource signal occurrences, not deduplicated or correlated incidents. One incident can emit multiple alerts and health signals. Correlate against an incident system before reporting incident totals.",
         ],
     }
 
@@ -128,7 +144,7 @@ def _headers():
 
 
 def _list_subscriptions(headers):
-    import requests
+    import azure_http as requests
 
     url = f"{ARM_ENDPOINT}/subscriptions?api-version=2022-12-01"
     subs = []
@@ -141,34 +157,59 @@ def _list_subscriptions(headers):
     return subs
 
 
-def _read_alerts(headers, subscription, time_range):
-    import requests
+def _read_alerts(headers, subscription, time_range, notes=None, start=None, end=None):
+    import azure_http as requests
 
-    url = f"{ARM_ENDPOINT}/subscriptions/{subscription}/providers/Microsoft.AlertsManagement/alerts?api-version=2019-05-05-preview&timeRange={time_range}"
-    ids, pages = [], 0
+    parameters = {"api-version": "2019-05-05-preview"}
+    if start and end:
+        parameters["customTimeRange"] = f"{start}/{end}"
+    else:
+        parameters["timeRange"] = time_range
+    url = f"{ARM_ENDPOINT}/subscriptions/{subscription}/providers/Microsoft.AlertsManagement/alerts?{urlencode(parameters)}"
+    ids, pages, seen = [], 0, set()
     while url and pages < 40:
         response = requests.get(url, headers=headers, timeout=120)
         response.raise_for_status()
         body = response.json()
+        if not isinstance(body.get("value"), list):
+            raise ValueError("Incomplete alert response: records missing")
         for alert in body.get("value", []):
+            key = alert.get("id")
+            if key and key.lower() in seen:
+                continue
+            if key:
+                seen.add(key.lower())
             essentials = (alert.get("properties", {}) or {}).get("essentials", {}) or {}
             ids.append(essentials.get("targetResource", ""))
         url = body.get("nextLink")
         pages += 1
+    if url:
+        if notes is None:
+            raise RuntimeError("Incomplete alerts: 40 page cap reached")
+        notes.append(f"Incomplete alerts for subscription {subscription}: 40 page cap reached.")
     return ids
 
 
-def _read_health(headers, subscription, start):
-    import requests
+def _read_health(headers, subscription, start, notes=None, end=None):
+    import azure_http as requests
 
     flt = f"eventTimestamp ge '{start}'"
+    if end:
+        flt += f" and eventTimestamp le '{end}'"
     url = f"{ARM_ENDPOINT}/subscriptions/{subscription}/providers/microsoft.insights/eventtypes/management/values?api-version=2015-04-01&$filter={flt}"
-    ids, pages = [], 0
+    ids, pages, seen = [], 0, set()
     while url and pages < 40:
         response = requests.get(url, headers=headers, timeout=120)
         response.raise_for_status()
         body = response.json()
+        if not isinstance(body.get("value"), list):
+            raise ValueError("Incomplete health response: records missing")
         for event in body.get("value", []):
+            key = event.get("eventDataId") or event.get("id")
+            if key and key.lower() in seen:
+                continue
+            if key:
+                seen.add(key.lower())
             if ((event.get("category") or {}).get("value") or "").lower() != "resourcehealth":
                 continue
             status = ((event.get("properties") or {}).get("currentHealthStatus") or "").lower()
@@ -176,31 +217,39 @@ def _read_health(headers, subscription, start):
                 ids.append(event.get("resourceId", ""))
         url = body.get("nextLink")
         pages += 1
+    if url:
+        if notes is None:
+            raise RuntimeError("Incomplete Resource Health: 40 page cap reached")
+        notes.append(f"Incomplete Resource Health for subscription {subscription}: 40 page cap reached.")
     return ids
 
 
 def main(days: int = 30) -> dict:
-    time_range = "1d" if int(days) <= 1 else ("7d" if int(days) <= 7 else "30d")
+    if int(days) not in (1, 7, 30):
+        raise ValueError("Choose exactly 1, 7 or 30 days so alert and health windows agree")
+    time_range = f"{int(days)}d"
     headers = _headers()
     notes = []
-    start = (datetime.now(timezone.utc) - timedelta(days=int(days))).replace(microsecond=0).isoformat()
+    end = datetime.now(timezone.utc).replace(microsecond=0)
+    start = (end - timedelta(days=int(days))).isoformat()
+    window_label = f"{start} to {end.isoformat()} (requested {days} days; both sources use these UTC boundaries)"
     try:
         subs = _list_subscriptions(headers)
     except Exception as error:  # noqa: BLE001
-        return build_report_data({}, time_range, 0, REPEAT_THRESHOLD, [f"Could not list subscriptions ({error})."])
+        return build_report_data({}, window_label, 0, REPEAT_THRESHOLD, ["Incomplete: could not list subscriptions."])
 
     alerts, health = [], []
     for sub in subs:
         try:
-            alerts.extend(_read_alerts(headers, sub, time_range))
+            alerts.extend(_read_alerts(headers, sub, time_range, notes, start=start, end=end.isoformat()))
         except Exception:  # noqa: BLE001
             notes.append(f"Alerts not read for subscription {sub}.")
         try:
-            health.extend(_read_health(headers, sub, start))
+            health.extend(_read_health(headers, sub, start, notes, end=end.isoformat()))
         except Exception:  # noqa: BLE001
             notes.append(f"Resource health not read for subscription {sub}.")
 
-    return build_report_data(aggregate(alerts, health), time_range, len(subs), REPEAT_THRESHOLD, notes)
+    return build_report_data(aggregate(alerts, health), window_label, len(subs), REPEAT_THRESHOLD, notes)
 
 
 if __name__ == "__main__":

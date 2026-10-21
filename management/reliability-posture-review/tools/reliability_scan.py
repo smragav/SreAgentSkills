@@ -18,6 +18,13 @@ references/checks-catalog.md and references/scoring-method.md.
 import json
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
+
+for _parent in Path(__file__).resolve().parents:
+    _tools = _parent / "shared" / "tools"
+    if (_tools / "azure_http.py").is_file():
+        sys.path.insert(0, str(_tools))
+        break
 
 ARM_ENDPOINT = "https://management.azure.com"
 SEVERITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
@@ -45,7 +52,7 @@ RULES = [
         "key": "pip_basic",
         "severity": "High",
         "resource_type": "Public IP",
-        "issue": "Basic SKU public IP is retiring and not zone redundant",
+        "issue": "Legacy Basic SKU public IP requires migration review",
         "recommendation": "Migrate to a Standard SKU public IP.",
         "kql": "resources | where type =~ 'microsoft.network/publicipaddresses' | where tostring(sku.name) =~ 'Basic' | project name, id, resourceGroup, subscriptionId, location",
     },
@@ -53,7 +60,7 @@ RULES = [
         "key": "lb_basic",
         "severity": "High",
         "resource_type": "Load balancer",
-        "issue": "Basic load balancer is retiring and has no zone support or SLA",
+        "issue": "Legacy Basic load balancer requires migration review",
         "recommendation": "Migrate to Standard Load Balancer.",
         "kql": "resources | where type =~ 'microsoft.network/loadbalancers' | where tostring(sku.name) =~ 'Basic' | project name, id, resourceGroup, subscriptionId, location",
     },
@@ -74,20 +81,44 @@ RULES = [
         "kql": "resources | where type =~ 'microsoft.storage/storageaccounts' | where tostring(sku.name) endswith 'LRS' | project name, id, resourceGroup, subscriptionId, location",
     },
     {
-        "key": "appgw_no_zone",
+        "key": "appgw_single_zone",
         "severity": "Medium",
         "resource_type": "Application Gateway",
-        "issue": "Application Gateway not zone redundant",
-        "recommendation": "Redeploy the gateway across availability zones (v2 SKU).",
-        "kql": "resources | where type =~ 'microsoft.network/applicationgateways' | where isnull(zones) or array_length(zones) == 0 | project name, id, resourceGroup, subscriptionId, location",
+        "issue": "Application Gateway v2 explicitly pinned to one zone",
+        "recommendation": "Review zone redundancy and supported regional deployment options before changing placement.",
+        "kql": "resources | where type =~ 'microsoft.network/applicationgateways' | where tostring(sku.name) in~ ('Standard_v2','WAF_v2') | where array_length(zones) == 1 | project name, id, resourceGroup, subscriptionId, location",
+    },
+    {
+        "key": "appgw_zone_applicability",
+        "severity": "Unknown",
+        "resource_type": "Application Gateway",
+        "issue": "Application Gateway effective zone deployment requires verification",
+        "recommendation": "Absent zones does not mean absent redundancy. New v2 gateways default to zone redundancy in supported regions; verify region, SKU, creation history and effective deployment.",
+        "kql": "resources | where type =~ 'microsoft.network/applicationgateways' | where isnull(zones) or array_length(zones) == 0 | project name, id, resourceGroup, subscriptionId, location, sku",
+    },
+    {
+        "key": "vm_workload_topology",
+        "severity": "Unknown",
+        "resource_type": "Virtual machine",
+        "issue": "Workload redundancy not assessed by VM zone or availability set membership",
+        "recommendation": "Verify at least two healthy workload instances across independent failure domains and actual traffic failover. One zonal VM is not a redundant workload.",
+        "kql": "resources | where type =~ 'microsoft.compute/virtualmachines' | where array_length(zones) > 0 or isnotnull(properties.availabilitySet) | project name, id, resourceGroup, subscriptionId, location",
     },
     {
         "key": "aks_no_zone",
-        "severity": "Medium",
+        "severity": "Unknown",
         "resource_type": "AKS node pool",
-        "issue": "Node pool without availability zones or with a single node",
-        "recommendation": "Spread node pools across availability zones and run at least two nodes.",
-        "kql": "resources | where type =~ 'microsoft.containerservice/managedclusters' | mv-expand pool = properties.agentPoolProfiles | extend zones = pool.availabilityZones, nodes = toint(pool['count']) | where isnull(zones) or array_length(zones) == 0 or nodes < 2 | project name, id, resourceGroup, subscriptionId, location",
+        "issue": "AKS pool zone applicability and workload placement require verification",
+        "recommendation": "Verify current regional AKS, VM SKU and zone support, plus actual pod placement. Missing pool zones alone is not a universal remediation rule.",
+        "kql": "resources | where type =~ 'microsoft.containerservice/managedclusters' | mv-expand pool = properties.agentPoolProfiles | where isnull(pool.availabilityZones) or array_length(pool.availabilityZones) < 2 | project name, id, resourceGroup, subscriptionId, location",
+    },
+    {
+        "key": "aks_system_under_three",
+        "severity": "Medium",
+        "resource_type": "AKS system pool",
+        "issue": "System pool below production recommendation of three nodes",
+        "recommendation": "Plan at least three system nodes for production, including the autoscaler minimum; two is a platform minimum.",
+        "kql": "resources | where type =~ 'microsoft.containerservice/managedclusters' | mv-expand pool = properties.agentPoolProfiles | where tostring(pool.mode) =~ 'System' | extend nodes = iff(tobool(pool.enableAutoScaling), toint(pool.minCount), toint(pool['count'])) | where nodes < 3 | project name, id, resourceGroup, subscriptionId, location",
     },
     {
         "key": "cosmos_single_region",
@@ -99,15 +130,8 @@ RULES = [
     },
 ]
 
-NON_PROD = ("lab", "dev", "sandbox", "poc", "temp", "demo", "test")
-
-
 def adjust_severity(base, name):
-    """Lower non production resources by one band. Pure and testable."""
-    lowered = {"Critical": "High", "High": "Medium", "Medium": "Low", "Low": "Low"}
-    label = (name or "").lower()
-    if any(token in label for token in NON_PROD):
-        return lowered.get(base, base)
+    """Resource names are not authoritative workload criticality evidence."""
     return base
 
 
@@ -142,6 +166,11 @@ def build_report_data(findings, subscription_names, subscriptions_scanned, notes
     for finding in findings:
         finding["subscription"] = subs_display.get(finding.get("subscription"), finding.get("subscription"))
     return {
+        "assessment_status": "Not assessed" if not subscriptions_scanned else "Partial" if notes or any(f.get("severity") == "Unknown" for f in findings) else "Complete",
+        "sources": [
+            {"title": "Application Gateway v2 reliability", "url": "https://learn.microsoft.com/en-us/azure/reliability/reliability-application-gateway-v2"},
+            {"title": "VM reliability", "url": "https://learn.microsoft.com/en-us/azure/reliability/reliability-virtual-machines"},
+        ],
         "title": "Reliability Posture Review",
         "subtitle": "Well-Architected reliability pillar: single points of failure and redundancy gaps.",
         "meta": {
@@ -168,6 +197,8 @@ def build_report_data(findings, subscription_names, subscriptions_scanned, notes
         + [
             "Live idle and underused resources are assessed by the cost optimizer skill.",
             "Severity reflects blast radius and likelihood, not effort to fix.",
+            "Names never lower severity. Workload criticality requires explicit owner validated context.",
+            "Placement signals are not proof of workload redundancy, tested failover or measured RTO and RPO.",
         ],
     }
 
@@ -180,7 +211,7 @@ def _headers():
 
 
 def _list_subscription_names(headers):
-    import requests
+    import azure_http as requests
 
     url = f"{ARM_ENDPOINT}/subscriptions?api-version=2022-12-01"
     names = {}
@@ -195,7 +226,7 @@ def _list_subscription_names(headers):
 
 
 def _run_graph(headers, query):
-    import requests
+    import azure_http as requests
 
     url = f"{ARM_ENDPOINT}/providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01"
     rows = []
@@ -225,6 +256,12 @@ def main() -> dict:
 
     findings = []
     scanned = set()
+    try:
+        scope_rows = _run_graph(headers, "resources | summarize resource_count=count()")
+        if not scope_rows or not scope_rows[0].get("resource_count"):
+            notes.append("Scope visibility is empty or unknown. No healthy estate conclusion can be drawn.")
+    except Exception:
+        notes.append("Scope visibility could not be confirmed.")
     for rule in RULES:
         try:
             rows = _run_graph(headers, rule["kql"])

@@ -12,8 +12,8 @@ Create this in Scheduled tasks. New resources arrive without monitoring wiring, 
 Run an observability coverage review across the subscriptions this agent can read.
 
 1. Use the observability-coverage-gap skill.
-2. Run observability_gap.py to map diagnostic settings, metric alert coverage, action groups, and workspaces, then verify anything not answerable in bulk.
-3. Produce the self contained HTML report and post the file link with a short summary: resources with gaps, blind resources with no diagnostic settings, subscriptions with no action group, and the top gaps by subscription.
-4. If a previous run exists in memory, add a short note on newly blind resources since the last sweep.
+2. Run observability_gap.py to inspect resource API diagnostic settings and enabled alert candidates with actions, types and scopes. A local workspace or action group is not required.
+3. Produce a draft report with assessment status, verified configuration gaps and unknown resources. Review sanitization and sharing approval before publishing a link.
+4. Compare previous runs only over the same assessed scope. Do not call resources blind solely because diagnostic settings were absent or collection failed.
 
 Do not create any monitoring wiring. Provide recommendations only, for a human to apply.

@@ -10,10 +10,12 @@ python tools/appservice_review.py | python tools/report_render.py
 
 - title: "App Service and Container Apps Health". subtitle: web tier scaling, probes, and transport security.
 - meta: window is "Point in time", scope is the count of subscriptions scanned, source is "Azure Resource Graph".
-- summary_cards: resources with findings, High findings, checks evaluated, subscriptions scanned.
+- summary_cards: resources with findings, High findings, check definitions and subscriptions scanned. Definition count is not successful resource coverage.
 - charts: findings by severity, and findings by category (App Service, App Service plan, Container Apps).
 - findings: columns resource, category, subscription, resource_group, check, recommendation, severity. Each row carries a _band equal to its severity.
-- method_notes: the note that a check is skipped when its field is not present, and any scope not assessed.
+- assessment_status: Complete, Partial or Not assessed. Missing configuration is Unknown, never a pass.
+- sources: titled official documentation URLs.
+- method_notes: per container and probe type coverage, portal default limits, missing fields and scope not assessed.
 
 ## Sections the renderer produces
 

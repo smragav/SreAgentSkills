@@ -1,56 +1,39 @@
 from pathlib import Path
 import json
 import re
-import time
+import os
+import sys
 import pandas as pd
-import requests
+for _parent in Path(__file__).resolve().parents:
+    _tools = _parent / "shared" / "tools"
+    if (_tools / "azure_http.py").is_file():
+        sys.path.insert(0, str(_tools))
+        break
+import azure_http as requests
 
 # Copy this template into the active thread workspace before running it.
-THREAD_DIR = Path("/absolute/path/to/tmp/ThreadFiles/<thread-id>/azure-landing-zone")
-THREAD_DIR.mkdir(parents=True, exist_ok=True)
-XLSX_PATH = Path("/absolute/path/to/tmp/ThreadFiles/<thread-id>/inventory.xlsx")
-REGION = "westeurope"
-HOURS_PER_MONTH = 730.0
+THREAD_DIR = Path(os.environ.get("SRE_ARCH_OUTPUT", "azure-landing-zone"))
+XLSX_PATH = Path(os.environ.get("SRE_ARCH_INVENTORY", "inventory.xlsx"))
+REGION = os.environ.get("SRE_ARCH_REGION", "westeurope")
+HOURS_PER_MONTH = float(os.environ.get("SRE_ARCH_HOURS", "730"))
+SUBSCRIPTION_LAYOUT = os.environ.get("SRE_ARCH_ENVIRONMENTS", "prod,dev,test,acceptance").split(",")
+USE_V2_DATA_DISKS = os.environ.get("SRE_ARCH_PREMIUM_V2_DATA", "").lower() == "true"
 
-SKU_FALLBACK_CATALOG = [
-    {"sku": "Standard_D2s_v5", "family": "D", "cpu": 2, "ram_gb": 8, "version": 5, "suffix": "s"},
-    {"sku": "Standard_D4s_v5", "family": "D", "cpu": 4, "ram_gb": 16, "version": 5, "suffix": "s"},
-    {"sku": "Standard_D8s_v5", "family": "D", "cpu": 8, "ram_gb": 32, "version": 5, "suffix": "s"},
-    {"sku": "Standard_D16s_v5", "family": "D", "cpu": 16, "ram_gb": 64, "version": 5, "suffix": "s"},
-    {"sku": "Standard_E4ds_v5", "family": "E", "cpu": 4, "ram_gb": 32, "version": 5, "suffix": "ds"},
-    {"sku": "Standard_E8ds_v5", "family": "E", "cpu": 8, "ram_gb": 64, "version": 5, "suffix": "ds"},
-    {"sku": "Standard_E16ds_v5", "family": "E", "cpu": 16, "ram_gb": 128, "version": 5, "suffix": "ds"},
-    {"sku": "Standard_E20ds_v5", "family": "E", "cpu": 20, "ram_gb": 160, "version": 5, "suffix": "ds"},
-    {"sku": "Standard_E32ds_v5", "family": "E", "cpu": 32, "ram_gb": 256, "version": 5, "suffix": "ds"},
-]
 VM_SKU_PATTERN = re.compile(r"^Standard_([DE])(\d+)([a-z]*)_v(\d+)$", re.IGNORECASE)
 
 price_cache = {}
 vm_sku_cache = {}
 
 
-def paged_items(filter_expr: str, max_attempts: int = 5):
+def paged_items(filter_expr: str):
     url = "https://prices.azure.com/api/retail/prices"
     params = {"$filter": filter_expr}
     items = []
-    session = requests.Session()
     headers = {"User-Agent": "Azure-SRE-Agent/1.0"}
     while True:
-        payload = None
-        last_error = None
-        for attempt in range(1, max_attempts + 1):
-            try:
-                resp = session.get(url, params=params, timeout=90, headers=headers)
-                resp.raise_for_status()
-                payload = resp.json()
-                break
-            except requests.RequestException as exc:
-                last_error = exc
-                if attempt == max_attempts:
-                    raise
-                time.sleep(min(2 ** attempt, 20))
-        if payload is None:
-            raise RuntimeError(f"No payload returned for filter {filter_expr!r}: {last_error}")
+        resp = requests.get(url, params=params, timeout=90, headers=headers)
+        resp.raise_for_status()
+        payload = resp.json()
         items.extend(payload.get("Items", []))
         next_link = payload.get("NextPageLink")
         if not next_link:
@@ -115,10 +98,9 @@ def available_vm_catalog():
         if catalog:
             vm_sku_cache[REGION] = list(catalog.values())
             return vm_sku_cache[REGION]
-    except requests.RequestException:
-        pass
-    vm_sku_cache[REGION] = SKU_FALLBACK_CATALOG
-    return vm_sku_cache[REGION]
+    except Exception as error:
+        raise RuntimeError(f"Retail VM catalog unavailable for {REGION}; no fallback sizing or deployability assertion.") from error
+    raise RuntimeError(f"No usable retail VM catalog for {REGION}; sizing is not assessed.")
 
 
 def best_price(
@@ -249,7 +231,7 @@ def choose_sku(row):
     if not candidates:
         candidates = [s for s in catalog if s["cpu"] >= cpu_needed and s["ram_gb"] >= ram_needed]
     if not candidates:
-        candidates = SKU_FALLBACK_CATALOG
+        raise ValueError(f"No catalog VM meets CPU={cpu_needed}, RAM={ram_needed}; manual sizing required.")
     candidates.sort(key=lambda s: (-int(s.get("version", 0)), s["cpu"], s["ram_gb"], s.get("suffix", "")))
     return candidates[0]
 
@@ -305,10 +287,12 @@ def premium_ssd_v2_price_item():
     )
 
 
-def disk_monthly(capacity_gib, fallback_price_item, premium_v2_price_item=None, disk_count=1):
+def disk_monthly(capacity_gib, fallback_price_item, premium_v2_price_item=None, disk_count=1, disk_role="os"):
     if capacity_gib <= 0 or disk_count <= 0:
         return 0.0, "none"
-    if premium_v2_price_item is not None:
+    if disk_role not in ("os", "data"):
+        raise ValueError("disk_role must be os or data.")
+    if premium_v2_price_item is not None and disk_role == "data":
         return monthly(premium_v2_price_item, units=float(capacity_gib) * float(disk_count)), "Premium SSD v2"
     return monthly(fallback_price_item, units=float(disk_count)), "Premium SSD Managed Disks"
 
@@ -346,6 +330,7 @@ def build_reliability_recommendations(df):
 
 
 def main():
+    THREAD_DIR.mkdir(parents=True, exist_ok=True)
     df = pd.read_excel(XLSX_PATH)
     df.columns = [c.strip() for c in df.columns]
     work = df.copy()
@@ -371,10 +356,8 @@ def main():
     }
 
     premium_v2_item = None
-    try:
+    if USE_V2_DATA_DISKS:
         premium_v2_item = premium_ssd_v2_price_item()
-    except RuntimeError:
-        premium_v2_item = None
 
     price_trace_rows = []
     vm_rows = []
@@ -391,6 +374,7 @@ def main():
                 row["data_disk_capacity_gib"],
                 data_disk_fallback_item,
                 premium_v2_price_item=premium_v2_item,
+                disk_role="data",
                 disk_count=int(row["data_disk_count"]),
             )
         vm_monthly = monthly(vm_item)
@@ -479,11 +463,13 @@ def main():
 
     reliability_df = build_reliability_recommendations(work)
     assumptions = pd.DataFrame([
-        {"Area": "Region", "Assumption": "West Europe retail list pricing."},
-        {"Area": "Environment layout", "Assumption": "Model separate prod, dev, test, and acceptance subscriptions with corresponding environment VNets unless the user requests a different topology."},
+        {"Area": "Region", "Assumption": f"{REGION} retail list pricing; {HOURS_PER_MONTH} compute hours per month."},
+        {"Area": "Environment layout", "Assumption": f"Proposed environments: {', '.join(SUBSCRIPTION_LAYOUT)}. This does not multiply the modeled inventory or shared services."},
         {"Area": "Pricing source", "Assumption": "Azure Retail Prices API, consumption/list prices."},
-        {"Area": "VM selection", "Assumption": "Recommended VM sizes prefer the newest region-available stable SKU version that satisfies workload sizing needs."},
-        {"Area": "Storage", "Assumption": "Premium SSD v2 is preferred for modeled disks; fallback to Premium SSD managed disks is used if Premium SSD v2 pricing is not resolved cleanly."},
+        {"Area": "VM selection", "Assumption": "Retail catalog candidates prefer newer versions meeting estimated CPU and RAM. Retail meters do not prove regional or subscription deployability, quota, capacity, certifications or actual VM capabilities."},
+        {"Area": "Storage", "Assumption": "OS disks always use Premium SSD managed disks, never Premium SSD v2. Data disks use v2 only with SRE_ARCH_PREMIUM_V2_DATA=true after region, zone and VM compatibility review. V2 costs model capacity only, excluding additional provisioned IOPS and throughput."},
+        {"Area": "Sizing", "Assumption": "Disk counts and capacities and D/E RAM multipliers are planning heuristics, not measured workload requirements. Validate actual disk capacity, latency, IOPS and throughput before approval."},
+        {"Area": "Exclusions", "Assumption": "Not a full bill: excludes backup storage and instance costs, logs ingestion and retention, bandwidth, transactions, variable gateway capacity, support, taxes, reservations and negotiated discounts."},
         {"Area": "Licensing", "Assumption": "AHB scenario assumes all eligible Windows Server VMs use Azure Hybrid Benefit and therefore pay the base compute rate."},
         {"Area": "Framework", "Assumption": "Architecture guidance is aligned to Azure Well-Architected Framework pillars with emphasis on reliability and security readiness."},
         {"Area": "Subscription readiness", "Assumption": "Enable Microsoft Defender for Cloud, Service Health alerts, and Activity Log alerts for each target subscription before migration."},
@@ -491,8 +477,8 @@ def main():
     ])
     price_trace_df = pd.DataFrame(price_trace_rows)
 
-    cost_xlsx = THREAD_DIR / "azure-west-europe-cost-estimate.xlsx"
-    cost_csv = THREAD_DIR / "azure-west-europe-cost-summary.csv"
+    cost_xlsx = THREAD_DIR / f"azure-{REGION}-cost-estimate.xlsx"
+    cost_csv = THREAD_DIR / f"azure-{REGION}-cost-summary.csv"
     with pd.ExcelWriter(cost_xlsx, engine="openpyxl") as writer:
         summary.to_excel(writer, sheet_name="Summary", index=False)
         shared.to_excel(writer, sheet_name="SharedServices", index=False)
@@ -503,13 +489,18 @@ def main():
     summary.to_csv(cost_csv, index=False)
 
     metadata = {
+        "assessment_status": "Partial",
+        "sources": [
+            {"title": "Retail Prices API", "url": "https://learn.microsoft.com/en-us/rest/api/cost-management/retail-prices/azure-retail-prices"},
+            {"title": "Managed disk types", "url": "https://learn.microsoft.com/en-us/azure/virtual-machines/disks-types"},
+        ],
         "serverCount": int(len(df)),
         "monthlyTotalUsd": baseline_total,
         "monthlyTotalUsdWithAhb": ahb_total,
         "ahbSavingsUsd": round(baseline_total - ahb_total, 2),
         "notes": assumptions["Assumption"].tolist(),
         "reliabilityRecommendations": reliability_df["Recommendation"].tolist(),
-        "subscriptionLayout": ["prod", "dev", "test", "acceptance"],
+        "subscriptionLayout": SUBSCRIPTION_LAYOUT,
         "subscriptionReminders": [
             "Enable Microsoft Defender for Cloud on each target subscription.",
             "Enable Service Health alerts and Activity Log alerts with action groups for each target subscription.",
@@ -523,11 +514,11 @@ def main():
         ],
         "diagramGeneration": {
             "owner": "drawio-mcp",
-            "expectedArtifact": "azure-west-europe-landing-zone.drawio",
+            "expectedArtifact": f"azure-{REGION}-landing-zone.drawio",
             "instruction": "Create the draw.io artifact separately from the modeled target Azure architecture. Do not infer currently deployed Azure resources.",
         },
     }
-    metadata_path = THREAD_DIR / "azure-west-europe-estimate-metadata.json"
+    metadata_path = THREAD_DIR / f"azure-{REGION}-estimate-metadata.json"
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
     print(cost_xlsx)
@@ -537,4 +528,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

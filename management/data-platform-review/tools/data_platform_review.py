@@ -14,6 +14,14 @@ can be unit tested without them.
 """
 
 import json
+import sys
+from pathlib import Path
+
+for _parent in Path(__file__).resolve().parents:
+    _tools = _parent / "shared" / "tools"
+    if (_tools / "azure_http.py").is_file():
+        sys.path.insert(0, str(_tools))
+        break
 
 ARM_ENDPOINT = "https://management.azure.com"
 SEVERITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
@@ -38,10 +46,14 @@ def evaluate_sql_db(row):
     sku = row.get("sku", {}) or {}
     tier = (sku.get("tier") or "").lower()
     findings = []
-    if tier in ("premium", "businesscritical") and not props.get("zoneRedundant"):
+    if not tier or (tier in ("premium", "businesscritical") and props.get("zoneRedundant") is None):
+        findings.append(_finding(row, "SQL", "Zone redundancy not assessed", "Read SKU tier and the explicit zoneRedundant setting; validate regional tier support.", "Unknown"))
+    elif tier in ("premium", "businesscritical") and props.get("zoneRedundant") is False:
         findings.append(_finding(row, "SQL", "Premium or Business Critical database without zone redundancy", "Enable zoneRedundant on the database.", "High"))
     if (props.get("requestedBackupStorageRedundancy") or "").lower() == "local":
         findings.append(_finding(row, "SQL", "Backups are locally redundant only", "Set backup storage redundancy to Geo or Zone where the data warrants it.", "Medium"))
+    elif not props.get("requestedBackupStorageRedundancy"):
+        findings.append(_finding(row, "SQL", "Backup redundancy not assessed", "Read current and requested backup storage redundancy from the SQL API.", "Unknown"))
     return findings
 
 
@@ -50,37 +62,65 @@ def evaluate_sql_server(row):
     findings = []
     if (props.get("publicNetworkAccess") or "").lower() == "enabled":
         findings.append(_finding(row, "SQL", "SQL server public network access enabled", "Use Private Link or firewall rules and disable public access.", "Low"))
+    elif props.get("publicNetworkAccess") is None:
+        findings.append(_finding(row, "SQL", "Public network access not assessed", "Read publicNetworkAccess and firewall or private endpoint rules.", "Unknown"))
     tls = (props.get("minimalTlsVersion") or "").strip()
-    if tls in ("1.0", "1.1", ""):
+    if not tls:
+        findings.append(_finding(row, "SQL", "Minimum TLS not assessed", "Read minimalTlsVersion from the server API.", "Unknown"))
+    elif tls in ("1.0", "1.1"):
         findings.append(_finding(row, "SQL", "SQL server minimum TLS below 1.2", "Set the minimum TLS version to 1.2.", "Medium"))
     return findings
 
 
 def evaluate_flexible(row):
-    engine = "PostgreSQL" if "postgresql" in (row.get("type") or "").lower() else "MySQL"
+    rtype = (row.get("type") or "").lower()
+    if rtype not in ("microsoft.dbforpostgresql/flexibleservers", "microsoft.dbformysql/flexibleservers"):
+        return [_finding(row, "Unknown engine", "Database engine not assessed", "Read the exact resource type before applying engine specific checks.", "Unknown")]
+    engine = "PostgreSQL" if "postgresql" in rtype else "MySQL"
     props = row.get("properties", {}) or {}
     findings = []
-    if ((props.get("highAvailability", {}) or {}).get("mode") or "Disabled").lower() == "disabled":
-        findings.append(_finding(row, engine, "High availability disabled", "Enable zone redundant high availability for production.", "Medium"))
-    if ((props.get("backup", {}) or {}).get("geoRedundantBackup") or "Disabled").lower() == "disabled":
-        findings.append(_finding(row, engine, "Geo redundant backup disabled", "Enable geo redundant backup where regional recovery is required.", "Medium"))
-    if ((props.get("storage", {}) or {}).get("autoGrow") or "Disabled").lower() == "disabled":
+    tier = (row.get("sku") or {}).get("tier")
+    mode = (props.get("highAvailability") or {}).get("mode")
+    geo = (props.get("backup") or {}).get("geoRedundantBackup")
+    grow = (props.get("storage") or {}).get("autoGrow")
+    if mode is None or not tier:
+        findings.append(_finding(row, engine, "High availability applicability not assessed", "Read highAvailability.mode, SKU tier and region support. Burstable tiers cannot be assumed eligible.", "Unknown"))
+    elif str(mode).lower() == "disabled":
+        findings.append(_finding(row, engine, "High availability disabled", "For production, review workload requirements and eligible compute tier, region and zone capacity before enabling HA.", "Medium"))
+    if geo is None:
+        findings.append(_finding(row, engine, "Geo redundant backup not assessed", "Read backup.geoRedundantBackup and verify regional support.", "Unknown"))
+    elif str(geo).lower() == "disabled":
+        advice = ("PostgreSQL geo redundant backup can be configured only at server creation. Plan a new server and tested migration or restore path if regional recovery is required."
+                  if engine == "PostgreSQL" else
+                  "Verify current MySQL geo backup eligibility and change constraints before planning regional recovery.")
+        findings.append(_finding(row, engine, "Geo redundant backup disabled", advice, "Medium"))
+    if grow is None:
+        findings.append(_finding(row, engine, "Storage auto grow not assessed", "Read the engine specific storage.autoGrow field and storage tier limits.", "Unknown"))
+    elif str(grow).lower() == "disabled":
         findings.append(_finding(row, engine, "Storage auto grow disabled", "Enable auto grow to avoid a storage full outage.", "Low"))
     if ((props.get("network", {}) or {}).get("publicNetworkAccess") or "").lower() == "enabled":
         findings.append(_finding(row, engine, "Public network access enabled", "Use private access (VNet integration) and disable public access.", "Low"))
+    elif (props.get("network") or {}).get("publicNetworkAccess") is None:
+        findings.append(_finding(row, engine, "Public network access not assessed", "Read network.publicNetworkAccess and the engine specific network mode.", "Unknown"))
     return findings
 
 
 def evaluate_cosmos(row):
     props = row.get("properties", {}) or {}
-    locations = props.get("locations", []) or []
+    locations = props.get("locations")
     findings = []
-    if len(locations) < 2:
+    if not locations:
+        findings.append(_finding(row, "Cosmos DB", "Region configuration not assessed", "Read account locations from the service API.", "Unknown"))
+    elif len(locations) < 2:
         findings.append(_finding(row, "Cosmos DB", "Single region account", "Add a second region.", "Medium"))
-    elif not props.get("enableAutomaticFailover"):
+    elif props.get("enableAutomaticFailover") is None:
+        findings.append(_finding(row, "Cosmos DB", "Automatic failover not assessed", "Read enableAutomaticFailover and write region mode.", "Unknown"))
+    elif props.get("enableAutomaticFailover") is False:
         findings.append(_finding(row, "Cosmos DB", "Automatic failover disabled on a multi region account", "Enable automatic failover so a regional loss fails over without manual action.", "Medium"))
     if ((props.get("backupPolicy", {}) or {}).get("type") or "").lower() == "periodic":
         findings.append(_finding(row, "Cosmos DB", "Periodic backup mode", "Consider continuous backup for critical accounts, for point in time restore.", "Low"))
+    elif not (props.get("backupPolicy") or {}).get("type"):
+        findings.append(_finding(row, "Cosmos DB", "Backup policy not assessed", "Read backupPolicy from the account API.", "Unknown"))
     return findings
 
 
@@ -95,6 +135,12 @@ def build_report_data(findings, subs_scanned, notes):
     sev_items = [{"name": b, "value": sev_counts[b], "band": b} for b in ("Critical", "High", "Medium", "Low") if b in sev_counts]
     engine_items = sorted(({"name": k, "value": v} for k, v in by_engine.items()), key=lambda i: i["value"], reverse=True)
     return {
+        "assessment_status": "Not assessed" if not subs_scanned else "Partial" if notes or any(f["severity"] == "Unknown" for f in findings) else "Complete",
+        "sources": [
+            {"title": "PostgreSQL backup and restore", "url": "https://learn.microsoft.com/en-us/azure/postgresql/backup-restore/concepts-backup-restore"},
+            {"title": "MySQL high availability", "url": "https://learn.microsoft.com/en-us/azure/mysql/flexible-server/concepts-high-availability"},
+            {"title": "SQL zone redundancy", "url": "https://learn.microsoft.com/en-us/azure/azure-sql/database/high-availability-sla-local-zone-redundancy"},
+        ],
         "title": "Data Platform Review",
         "subtitle": "Managed database reliability and resilience.",
         "meta": {"window": "Point in time", "scope": f"{subs_scanned} subscription(s)", "source": "Azure Resource Graph"},
@@ -116,6 +162,8 @@ def build_report_data(findings, subs_scanned, notes):
         "method_notes": notes + [
             "Some overlap with the reliability-posture-review skill is intentional; this is the data tier deep dive.",
             "Azure SQL long term retention is not in Resource Graph and is checked by hand where longer retention is required.",
+            "Absent fields are not assessed, not Disabled. SKU, engine, region and API version determine applicability.",
+            "Configuration does not measure RTO or RPO. Obtain workload objectives and restore or failover test evidence separately.",
         ],
     }
 
@@ -128,7 +176,7 @@ def _headers():
 
 
 def _run_graph(headers, query):
-    import requests
+    import azure_http as requests
 
     url = f"{ARM_ENDPOINT}/providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01"
     rows, skip_token = [], None
@@ -151,7 +199,7 @@ def main() -> dict:
     queries = [
         ("resources | where type =~ 'microsoft.sql/servers/databases' | where name != 'master' | project name, id, subscriptionId, resourceGroup, sku, properties", evaluate_sql_db),
         ("resources | where type =~ 'microsoft.sql/servers' | project name, id, subscriptionId, resourceGroup, properties", evaluate_sql_server),
-        ("resources | where type in~ ('microsoft.dbforpostgresql/flexibleservers','microsoft.dbformysql/flexibleservers') | project name, id, type, subscriptionId, resourceGroup, properties", evaluate_flexible),
+        ("resources | where type in~ ('microsoft.dbforpostgresql/flexibleservers','microsoft.dbformysql/flexibleservers') | project name, id, type, subscriptionId, resourceGroup, location, sku, properties", evaluate_flexible),
         ("resources | where type =~ 'microsoft.documentdb/databaseaccounts' | project name, id, subscriptionId, resourceGroup, properties", evaluate_cosmos),
     ]
     for query, evaluator in queries:

@@ -13,7 +13,7 @@ Run a recurring incident review across the subscriptions this agent can read.
 
 1. Use the recurring-incident-patterns skill.
 2. Run pattern_scan.py over a thirty day window to aggregate fired alerts and resource health degradations by resource and rank the repeat offenders.
-3. Produce the self contained HTML report and post the file link with a short summary: the top repeat offenders with their counts, the resource types that break most, and where a reliability investment would pay back.
+3. Produce a sanitized draft with assessment status, aligned queried UTC windows, resource signal counts and any pagination cap or failure. Do not label alert plus health signal counts as distinct incidents. Obtain sharing approval before publishing a link.
 4. If a previous run exists in memory, note which offenders are new this month and which have improved or worsened.
 
 The report directs reliability investment; a human decides and acts. It changes nothing.

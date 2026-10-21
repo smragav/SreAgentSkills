@@ -7,7 +7,7 @@ A repeatable order for triaging one affected resource. The goal is time to mitig
 1. Confirm the symptom. What is the user or alert actually seeing: unavailable, degraded, slow, or erroring. Note when it started, as precisely as you can.
 2. Read current health. The gather_context tool reads Azure Resource Health for the resource. Unavailable or Degraded with a platform reason points at the platform; Available with a user symptom points at configuration or a dependency.
 3. Ask what changed. The most common cause of a new incident is a recent change. gather_context reads the Activity Log over the window. Look for deployments, configuration writes, scale actions, and failed operations just before the symptom start.
-4. Check the dependencies. Look at the neighbouring resources in the same resource group, and the resource's obvious dependencies (its database, its gateway, its key vault). A symptom often originates one hop away.
+4. Verify dependencies using configuration IDs, topology or traces. Resources in the same resource group are proximity candidates, not proven dependencies. Check the workload's database, gateway or key vault only when the relationship is evidenced.
 5. Read the signals. Pull the metrics around the symptom start and a focused log query for errors.
 
 ## Evidence to pull with RunAzCliReadCommands
@@ -32,6 +32,8 @@ az rest --method GET --url "https://management.azure.com<resource id>/providers/
 
 ## Reasoning to a probable cause
 
+The collector follows Activity Log and Resource Health continuations, up to 40 pages each. Neighbour inventory follows up to five Resource Graph pages of 200 rows. Caps, truncation and failed queries mark the assessment incomplete. A successful empty page is different from failed collection. Availability statuses do not guarantee complete health history for the requested interval.
+
 - Build one timeline from the changes and the health transitions, most recent first.
 - Anchor on the symptom start. The nearest preceding change is the first lead.
 - Write two to four hypotheses. For each: the cause, the timeline evidence for it, a confidence (high, medium, low), and the single check that would confirm or rule it out.
@@ -40,3 +42,8 @@ az rest --method GET --url "https://management.azure.com<resource id>/providers/
 ## Mitigations
 
 Propose mitigations ordered by safety and reversibility. For each give the exact command and the check to confirm it worked. Never present a change as done; the human runs it. A safe rollback of the most recent change is usually the first candidate; a restart is a mitigation, not a fix, so pair it with the follow up to find the cause.
+
+## Sources
+
+- [Activity Log](https://learn.microsoft.com/azure/azure-monitor/essentials/activity-log).
+- [Resource Graph paging](https://learn.microsoft.com/azure/governance/resource-graph/concepts/work-with-data).

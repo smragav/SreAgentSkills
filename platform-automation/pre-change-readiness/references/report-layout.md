@@ -13,7 +13,10 @@ python tools/readiness_check.py "<subscription id>" [resource group] | python to
 - summary_cards: the overall verdict, and the verdict for Reliability, Exposure, and Capacity, each as a card value with the count of findings as the sub label.
 - charts: findings by category, and findings by severity.
 - findings: columns category, resource, resource_group, issue, recommendation, severity. Each row carries a _band equal to its severity.
-- method_notes: the verdict rule and the scope that was checked.
+- assessment_status: Complete, Partial or Not assessed, independent of finding counts.
+- assessments: per check and capacity endpoint state; missing coverage blocks GO.
+- sources: titled official source URLs.
+- method_notes: the verdict rule, scope checked and the limits of configuration and capacity evidence.
 
 ## Sections the renderer produces
 
@@ -24,3 +27,5 @@ python tools/readiness_check.py "<subscription id>" [resource group] | python to
 5. Method and limits.
 
 The verdict cards are the headline. The findings table lists exactly what to clear to move a caution or no-go to go.
+
+INCOMPLETE must be presented as blocking GO. No findings does not mean ready when reads failed or the scope was empty. A GO applies to the listed configuration checks only, not overall change approval.

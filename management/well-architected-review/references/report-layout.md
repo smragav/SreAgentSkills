@@ -8,9 +8,12 @@ python tools/waf_assess.py | python tools/report_render.py
 
 ## report_data this skill emits
 
-- title: "Well-Architected Review". subtitle: Azure Well-Architected Framework scorecard across five pillars.
+- title: "Well-Architected Review". subtitle: custom 13 check indicator, not an official Microsoft Well Architected assessment or score.
 - meta: window is "Point in time", scope is the count of subscriptions scanned, source is "Azure Resource Graph".
-- summary_cards: one card per pillar (Reliability, Security, Cost Optimization, Operational Excellence, Performance Efficiency), each with the pillar score as the value and the rating as the sub label.
+- summary_cards: one card per pillar, with custom score, rating and read coverage. Partial coverage is visible beside the score.
+- assessment_status: Complete, Partial or Not assessed. Empty applicable scope is Not assessed.
+- coverage: definitions, read, skipped and unknown resource counts. Unknown and failed checks never enter the pass denominator.
+- sources: titled official documentation URLs.
 - charts: pillar scores (one neutral bar per pillar, matching the value charts elsewhere), and findings by severity.
 - findings: columns pillar, check, applicable, failing, pass_rate, recommendation, severity. Each row carries a _band equal to its severity.
 - method_notes: the scoring method (weighted pass ratio), the ratings scale, and any check skipped for lack of access.

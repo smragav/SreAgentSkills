@@ -22,33 +22,47 @@ Use this skill when the user asks to:
 ## Operating principles
 
 - Read only. This skill reads monitoring configuration. It never creates a diagnostic setting, an alert, or an action group; it reports what is missing and the wiring to add.
-- Default Reader scope. It reads resource inventory and monitoring configuration across the subscriptions this agent can read. If a read is denied, it records the scope as not assessed and continues. See references/permissions-and-scope.md.
+- Approved read scope. It reads resource inventory and monitoring configuration across the subscriptions this agent can read. If a read is denied, it records the scope as not assessed and continues. See references/permissions-and-scope.md.
 - Evidence first. Every finding names the resource, the specific wiring that is missing (diagnostic settings, a metric alert, an action group, or a workspace), and the recommended fix.
 
 ## Workflow
 
-The scan tool (tools/observability_gap.py) and the shared report renderer (tools/report_render.py) are bundled with this skill. Run them with RunInTerminal using the Python in the agent runtime. Both authenticate with the agent managed identity.
+The scan tool and shared renderer are bundled with this skill. The collector uses the shared deterministic identity helper; the renderer formats JSON locally. Validate host dependencies and permissions before execution.
 
 ### Phase 1: Map the wiring
 
-1. Run python tools/observability_gap.py with RunInTerminal. It enumerates the important resource types with Azure Resource Graph, builds the set of resources already covered by a metric alert, counts action groups and Log Analytics workspaces per subscription, checks diagnostic settings where Resource Graph can answer, and prints a report_data object as JSON.
-2. It records a gap per resource for each missing piece of wiring, following references/checks-catalog.md, and a subscription level gap when there is no action group to notify or no workspace to land logs.
+1. Run python tools/observability_gap.py with RunInTerminal. It inventories important resources and alert rules with Resource Graph, checks enabled state, actions, type and scope for alert candidates, and reads diagnostic settings through the resource API.
+2. A local workspace or action group is not required: destinations can be in other subscriptions. The tool checks up to 200 resources for diagnostic settings. Denied reads, unsupported resources and cap exclusions are unknown, not missing coverage.
 
 ### Phase 2: Verify anything Resource Graph could not answer
 
-Where the tool notes that diagnostic settings could not be read in bulk, spot check a sample with the per resource command in references/checks-catalog.md, and treat a denied read as not assessed.
+Resource Graph alone cannot conclusively enumerate diagnostic settings. Complete remaining resource API reads when needed. Validate rule conditions, destination access and actual telemetry delivery separately; candidate configuration is not proof of operational coverage.
 
 ### Phase 3: Produce the report
 
 1. Pipe the scan into the renderer: python tools/observability_gap.py | python tools/report_render.py with RunInTerminal. It writes the self contained HTML report and returns the path. Store it with SaveFileToBlob for a link.
-2. Present the report, then a short inline summary: resources with gaps, resources with no diagnostic settings, subscriptions with no action group, and the top gaps by subscription.
+2. Present the assessment status, assessed scope, unknown resources and verified configuration gaps. Do not call a resource blind solely because it has no diagnostic setting; other telemetry paths can exist.
 
 ## Scenario coverage
 
-This skill also answers 8 customer scenarios in the Management category (diagnostic settings, data collection rules, agent health, KQL patterns, metrics, VM performance anomalies, dashboards, workbooks). Open references/scenarios.md when the ask matches one of them: it holds the sample prompt, the run mode, and whether the skill covers it with built in checks or a guided read only prompt.
+This skill implements its documented checks, not every related scenario. Use the related skills for their complete evidence workflows. See [scenario routing](./references/scenarios.md).
+
 
 ## Expected output
 
 - Primary: a self contained HTML coverage gap report, covering gaps by type, gaps by subscription, and the full table naming the missing wiring per resource.
-- Inline: resources with gaps, the blind resources (no diagnostic settings), subscriptions with no action group, and the top gaps.
+- Inline: configuration gaps, unknown diagnostic assessments, alert candidates and scope limits.
 - Every finding names the resource, the missing wiring, and the recommended fix. Nothing is created; recommendations are for a human to apply.
+
+## Sources
+
+- [Diagnostic settings and destinations](https://learn.microsoft.com/azure/azure-monitor/essentials/diagnostic-settings), verified: destinations can cross subscriptions.
+- [Metric alert scopes](https://learn.microsoft.com/azure/azure-monitor/alerts/alerts-metric-overview).
+
+## Assessment and customer sharing
+
+Confirm the explicit customer scope and UTC window before collection. Accessible resources are not automatically approved scope. For a tool that enumerates all visible subscriptions, use an identity restricted to the approved scope or the related skill's scoped commands.
+
+Follow [assessment states and limits](./references/assessment-contract.md), [permissions](./references/permissions-and-scope.md), and [customer sharing review](./references/customer-sharing.md), bundled during deployment. The shared renderer produces a sanitized draft by default; `--include-identifiers` requires an explicitly approved customer audience. Review custom exports with the same checklist.
+
+Configure the host using [governance settings](./references/governance.json). General terminal access is not inherently read only. Never apply changes, schedule work, upload files or send messages without separate explicit approval.

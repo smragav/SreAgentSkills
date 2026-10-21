@@ -17,12 +17,36 @@ Pass a report_data object with:
 
 - generated_for: a label for the scope, for example the tenant or agent name.
 - window_days and data_source.
-- totals: analyzed_spend, estimated_monthly_savings, currency.
+- totals: analyzed_spend, estimated_monthly_savings, currency, savings_reconciled. Generate one report per explicit currency; conflicting row currencies are rejected.
+- reconciliation_notes: required before showing aggregate savings. Explain the common scope, cost basis, time window, Advisor and candidate deduplication, and selected alternatives among reservations, savings plans, rightsizing and scheduling.
+- assessment_status: Complete, Partial or Not assessed. sources: objects with title and url. notes and collection_failures: scope and collection limits.
 - subscriptions: a list of objects with name and cost for the selected subscriptions.
 - resource_groups: a list of objects with name and cost for the top resource groups.
 - savings_by_dimension: a mapping of dimension name to estimated monthly saving.
 - findings: a list, each with resource, dimension, current, proposed, monthly_saving, risk, priority_score, and priority_band.
-- candidates: the termination candidates, each with resource, resource_type, resource_id, subscription, subscription_id, resource_group, location, monthly_saving, saving_note, confidence, band, reason, next_step, delete_command, and optionally excluded and exclusion_reason. See references/idle-detection.md. The report derives the band from confidence if band is omitted, and builds the delete command from resource_id if delete_command is omitted.
+- candidates: the review candidates, each with resource, resource_type, resource_id, subscription, subscription_id, resource_group, location, monthly_saving, saving_note, confidence, band, reason, next_step, optional operator requested delete_command, and optionally excluded and exclusion_reason. See references/idle-detection.md. The report derives the band from confidence if band is omitted.
+
+The renderer no longer builds a delete command from a resource id. Include an
+operator requested command only when appropriate for the intended audience.
+Confidence is a review ranking, never authority to delete.
+
+Exports use the shared `sanitized_copy` policy by default. The optional
+`--include-identifiers` flag explicitly retains identifiers for an approved
+internal audience; credential filtering still applies. Review the sanitized
+draft before customer sharing. Local analytical evidence retains full ids.
+
+Subscription costs must sum to analyzed_spend for the same selected baseline.
+Resource group costs are a drilldown, never an additional baseline. Candidate
+estimates and commitment alternatives remain individual opportunities, not a
+second realizable savings total. Aggregate savings are displayed only with
+`savings_reconciled=true` and reconciliation_notes; otherwise the total is
+Not reconciled. Savings percentage uses analyzed spend normalized to 30 days
+from window_days and is not a claim of invoice savings.
+
+## Sources
+
+- [Query rows and pagination](https://learn.microsoft.com/javascript/api/@azure/arm-costmanagement/queryproperties)
+- [Cost access and scope](https://learn.microsoft.com/azure/cost-management-billing/costs/assign-access-acm-data)
 
 ## Accessibility
 

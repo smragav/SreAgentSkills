@@ -15,31 +15,18 @@ Azure Service Health. See references/checks-catalog.md.
 """
 
 import json
+import sys
+from pathlib import Path
+
+for _parent in Path(__file__).resolve().parents:
+    _tools = _parent / "shared" / "tools"
+    if (_tools / "azure_http.py").is_file():
+        sys.path.insert(0, str(_tools))
+        break
+from lifecycle import aks_support_plan, lifecycle_status
 
 ARM_ENDPOINT = "https://management.azure.com"
 SEVERITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
-K8S_FLOOR_MINOR = 28  # supported floor: below 1.28 is flagged
-
-# App Service Linux runtimes. Match is startswith on the uppercased linuxFxVersion.
-EOL_RUNTIMES = [
-    ("PYTHON|3.6", "Python 3.6", "High"), ("PYTHON|3.7", "Python 3.7", "High"), ("PYTHON|3.8", "Python 3.8", "Medium"),
-    ("NODE|12", "Node 12", "High"), ("NODE|14", "Node 14", "High"), ("NODE|16", "Node 16", "High"), ("NODE|18", "Node 18", "Medium"),
-    ("PHP|7", "PHP 7.x", "High"), ("PHP|8.0", "PHP 8.0", "High"), ("PHP|8.1", "PHP 8.1", "Medium"),
-    ("DOTNETCORE|2", "ASP.NET Core 2.x", "High"), ("DOTNETCORE|3.1", "ASP.NET Core 3.1", "High"),
-    ("DOTNET|5", ".NET 5", "High"), ("DOTNET|6", ".NET 6", "Medium"), ("DOTNET|7", ".NET 7", "High"),
-    ("JAVA|8", "Java 8", "Medium"),
-]
-
-# End of life OS images. Each entry: (offer_contains, sku_contains, label, severity).
-EOL_IMAGES = [
-    ("WindowsServer", "2008", "Windows Server 2008", "High"),
-    ("WindowsServer", "2012", "Windows Server 2012", "High"),
-    ("UbuntuServer", "16.04", "Ubuntu 16.04", "High"),
-    ("UbuntuServer", "18.04", "Ubuntu 18.04", "High"),
-    ("0001-com-ubuntu-server-focal", "", "Ubuntu 20.04 (nearing end of support)", "Medium"),
-    ("CentOS", "", "CentOS (end of life)", "Medium"),
-]
-
 
 def k8s_minor(version):
     """Return the minor version integer from a Kubernetes version, or None. Pure."""
@@ -49,30 +36,20 @@ def k8s_minor(version):
     return None
 
 
-def k8s_severity(minor, floor=K8S_FLOOR_MINOR):
-    """Severity for a Kubernetes minor version, or None when supported. Pure."""
-    if minor is None or minor >= floor:
-        return None
-    return "High" if minor <= floor - 3 else "Medium"
-
-
-def eol_runtime(linux_fx_version):
-    """Return (label, severity) for an end of life runtime, or None. Pure."""
+def eol_runtime(linux_fx_version, evidence=None, today=None, support_plan="app-service"):
+    """Exact runtime metadata decides status, not a permanent prefix list."""
     value = (linux_fx_version or "").upper()
-    for prefix, label, severity in EOL_RUNTIMES:
-        if value.startswith(prefix):
-            return label, severity
-    return None
+    status = lifecycle_status("app-service", value, support_plan, evidence, today)
+    if status["status"] == "Supported":
+        return None
+    return f"{value or 'Runtime'}: {status['status']}. {status['reason']}", "High" if status["status"] == "Unsupported" else "Unknown"
 
 
-def eol_image(offer, sku):
-    """Return (label, severity) for an end of life OS image, or None. Pure."""
-    offer_l = (offer or "").lower()
-    sku_l = (sku or "").lower()
-    for offer_match, sku_match, label, severity in EOL_IMAGES:
-        if offer_match.lower() in offer_l and (not sku_match or sku_match.lower() in sku_l):
-            return label, severity
-    return None
+def eol_image(offer, sku, evidence=None, today=None, support_plan=None):
+    status = lifecycle_status("vm-os", f"{offer}:{sku}".lower(), support_plan, evidence, today)
+    if status["status"] == "Supported":
+        return None
+    return f"{offer}:{sku}: {status['status']}. {status['reason']} Verify OS edition, image, ESU or extended support entitlement.", "High" if status["status"] == "Unsupported" else "Unknown"
 
 
 def _finding(row, category, deprecated, recommendation, severity, resource_type):
@@ -90,42 +67,48 @@ def _finding(row, category, deprecated, recommendation, severity, resource_type)
     }
 
 
-def scan_app_service(rows):
+def scan_app_service(rows, evidence=None, today=None):
     findings = []
     for row in rows:
-        match = eol_runtime(row.get("fx"))
+        match = eol_runtime(row.get("fx"), evidence, today)
         if match:
             label, severity = match
-            findings.append(_finding(row, "App Service runtime", f"{label} runtime", "Move the app to a supported runtime version.", severity, "App Service"))
+            findings.append(_finding(row, "App Service runtime", label, "Verify the exact stack and current provider lifecycle; plan migration only against verified dates.", severity, "App Service"))
     return findings
 
 
-def scan_retired_types(rows):
+def scan_retired_types(rows, evidence=None, today=None):
     findings = []
     for row in rows:
         rtype = (row.get("type") or "").lower()
+        status = lifecycle_status("azure-service", rtype, "service", evidence, today)
+        if status["status"] == "Supported":
+            continue
+        severity = "High" if status["status"] == "Unsupported" else "Unknown"
         if rtype.startswith("microsoft.classic"):
-            findings.append(_finding(row, "Classic", "Classic (Azure Service Manager) resource", "Migrate to the Azure Resource Manager equivalent.", "High", row.get("type", "Classic")))
+            findings.append(_finding(row, "Classic", f"Classic resource retirement: {status['status']}", status["reason"] + " Verify the service specific retirement and migration path to Resource Manager.", severity, row.get("type", "Classic")))
         elif rtype in ("microsoft.dbforpostgresql/servers", "microsoft.dbformysql/servers"):
             engine = "PostgreSQL" if "postgres" in rtype else "MySQL"
-            findings.append(_finding(row, "Retired service", f"{engine} Single Server (retired)", "Migrate to Flexible Server.", "High", f"{engine} Single Server"))
+            findings.append(_finding(row, "Legacy service", f"{engine} Single Server lifecycle: {status['status']}", status["reason"] + " Verify current service retirement metadata and migration to Flexible Server.", severity, f"{engine} Single Server"))
     return findings
 
 
-def scan_aks(rows, floor=K8S_FLOOR_MINOR):
+def scan_aks(rows, evidence=None, today=None):
     findings = []
     for row in rows:
-        version = row.get("kubernetesVersion")
-        severity = k8s_severity(k8s_minor(version), floor)
-        if severity:
-            findings.append(_finding(row, "AKS version", f"Kubernetes {version} (below the supported floor)", "Upgrade to a supported version and stay within the N minus two window.", severity, "AKS cluster"))
+        version = row.get("kubernetesVersion") or (row.get("properties") or {}).get("currentKubernetesVersion") or (row.get("properties") or {}).get("kubernetesVersion")
+        minor_version = ".".join(str(version or "").split(".")[:2])
+        status = lifecycle_status("aks", minor_version, aks_support_plan(row.get("properties") or row, row.get("sku") or {}), evidence, today)
+        if status["status"] != "Supported":
+            severity = "High" if status["status"] == "Unsupported" else "Unknown"
+            findings.append(_finding(row, "AKS version", f"Kubernetes {version}: {status['status']}", status["reason"] + " Verify regional version availability and support plan before upgrade.", severity, "AKS cluster"))
     return findings
 
 
 def scan_vm_os(rows):
     findings = []
     for row in rows:
-        match = eol_image(row.get("offer"), row.get("sku"))
+        match = eol_image(row.get("offer"), row.get("sku"), support_plan=row.get("support_plan"))
         if match:
             label, severity = match
             findings.append(_finding(row, "VM OS", f"{label} image", "Rebuild on a supported image, or move to a managed platform.", severity, "Virtual machine"))
@@ -143,11 +126,16 @@ def build_report_data(findings, subs_scanned, notes):
     sev_items = [{"name": b, "value": sev_counts[b], "band": b} for b in ("Critical", "High", "Medium", "Low") if b in sev_counts]
     cat_items = sorted(({"name": k, "value": v} for k, v in categories.items()), key=lambda i: i["value"], reverse=True)
     return {
+        "assessment_status": "Not assessed" if not subs_scanned else "Partial" if notes or any(f["severity"] == "Unknown" for f in findings) else "Complete",
+        "sources": [
+            {"title": "AKS lifecycle", "url": "https://learn.microsoft.com/en-us/azure/aks/supported-kubernetes-versions"},
+            {"title": "App Service language support", "url": "https://learn.microsoft.com/en-us/azure/app-service/language-support-policy"},
+        ],
         "title": "Deprecation and Retirement Tracker",
         "subtitle": "End of life runtimes, retired tiers, and old platform versions.",
         "meta": {"window": "Point in time", "scope": f"{subs_scanned} subscription(s)", "source": "Azure Resource Graph"},
         "summary_cards": [
-            {"label": "Deprecations found", "value": f"{len(findings):,}"},
+            {"label": "Lifecycle review items", "value": f"{len(findings):,}"},
             {"label": "Retired or end of life", "value": f"{high:,}", "sub": "plan these first"},
             {"label": "Categories affected", "value": str(len(categories))},
             {"label": "Subscriptions scanned", "value": str(subs_scanned)},
@@ -162,7 +150,8 @@ def build_report_data(findings, subs_scanned, notes):
             "rows": findings,
         },
         "method_notes": notes + [
-            f"Kubernetes floor: minor {K8S_FLOOR_MINOR}. Clusters below it are flagged.",
+            "Dynamic lifecycle status requires a schema v1 snapshot checked within 30 days. Missing or unmatched metadata is Unknown, never a false pass.",
+            "Java 8 is not blanket end of life on App Service. Exact stack, distribution and service policy must be checked.",
             "Retirement dates move. Corroborate the specifics against Azure Service Health planned retirements.",
             "Deprecated API versions and Basic tier retirements are covered elsewhere; see the checks catalog.",
         ],
@@ -177,7 +166,7 @@ def _headers():
 
 
 def _run_graph(headers, query):
-    import requests
+    import azure_http as requests
 
     url = f"{ARM_ENDPOINT}/providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01"
     rows, skip_token = [], None
@@ -200,9 +189,9 @@ def main() -> dict:
     findings = []
     scanned = set()
     queries = [
-        ("resources | where type =~ 'microsoft.web/sites' | extend fx = tostring(properties.siteConfig.linuxFxVersion) | where isnotempty(fx) | project name, id, subscriptionId, resourceGroup, fx", scan_app_service),
+        ("resources | where type =~ 'microsoft.web/sites' | extend fx = tostring(properties.siteConfig.linuxFxVersion) | project name, id, subscriptionId, resourceGroup, fx", scan_app_service),
         ("resources | where type startswith 'microsoft.classic' or type in~ ('microsoft.dbforpostgresql/servers','microsoft.dbformysql/servers') | project name, id, type, subscriptionId, resourceGroup", scan_retired_types),
-        ("resources | where type =~ 'microsoft.containerservice/managedclusters' | project name, id, subscriptionId, resourceGroup, kubernetesVersion=tostring(properties.kubernetesVersion)", scan_aks),
+        ("resources | where type =~ 'microsoft.containerservice/managedclusters' | project name, id, subscriptionId, resourceGroup, sku, properties, kubernetesVersion=tostring(properties.currentKubernetesVersion)", scan_aks),
         ("resources | where type =~ 'microsoft.compute/virtualmachines' | extend img = properties.storageProfile.imageReference | project name, id, subscriptionId, resourceGroup, offer=tostring(img.offer), sku=tostring(img.sku), publisher=tostring(img.publisher)", scan_vm_os),
     ]
     for query, scanner in queries:

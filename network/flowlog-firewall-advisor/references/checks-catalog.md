@@ -88,10 +88,16 @@ observation of a quarterly job is still a real dependency.
 ## Policy budget
 
 An Azure Firewall policy permits 20,000 unique source and destination combinations in
-network rules, counted as sources multiplied by destinations, protocols and ports,
+network rules, counted as `protocolCount * sourceCount * destinationCount * ceil(portCount / 14)`,
 summed across every rule. Flow log derived rules exceed this easily. The total is
 calculated and reported, and a breach is raised as the first method note rather than
 left for a deployment to discover.
 
 Ways down, in order of preference: raise the minimum flow count, narrow the scope to
 one direction, then accept subnet level granularity.
+
+The tool expands destination port ranges before grouping the port count in blocks of 14. Existing policy rules consume additional budget. The proposed rules are a draft: use isolated staging tests and owner approval before a controlled deployment, not an imaginary universal non enforcing mode.
+
+## Sources
+
+- [Azure Firewall limits](https://learn.microsoft.com/azure/azure-resource-manager/management/azure-subscription-service-limits#azure-firewall-limits), verified: the divisor is 14 with rounding upward.

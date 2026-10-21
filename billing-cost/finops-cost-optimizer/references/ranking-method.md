@@ -9,6 +9,7 @@ Cost basis:
 - Metric: amortized cost. Reservation and savings plan purchases are spread across the benefit period, not shown as a lump on the purchase day.
 - Window: the last 30 days.
 - Grouping: by subscription, then by resource group within each selected subscription.
+- Partition first by currency and cost basis. Never compare nominal spend across currencies. Consumption fallback is usage detail actual cost, not the amortized baseline; rank it separately and flag Partial.
 
 Selection rule (floor and cap) for a set of N items:
 
@@ -45,12 +46,13 @@ Sort findings by priority score, highest first.
 
 ## Confidence to terminate: idle candidates
 
-Termination candidates use a second, simpler axis. Savings still matters, but the
-decision is whether the resource is safe to delete, so each candidate carries a
-confidence to terminate value from 0 to 100 rather than a priority score.
+Termination candidates use a second, simpler axis. Savings still matters, but
+each candidate carries a review evidence score from 0 to 100 rather than a
+priority score. The historic field name is confidence to terminate; its value
+does not establish safety or grant permission to delete.
 
 - Very high, 90 or above: unattached and old enough to look abandoned.
-- High, 70 to 89: likely safe, still worth a quick owner check.
+- High, 70 to 89: stronger review evidence, not permission to delete.
 - Medium, 50 to 69: the signal is real but recent or ambiguous.
 - Low, below 50: likely disaster recovery or shared infrastructure; do not terminate without deeper validation.
 
@@ -68,3 +70,19 @@ A JSON object with:
 - selected_subscriptions: the ids chosen in phase 1.
 - resource_groups: for each selected subscription, the ranked resource groups with name, cost, rank, and selected.
 - notes: any warnings, for example mixed currencies or a fallback data source.
+
+Additional fields: `assessment_status`, `sources`, per subscription `cost_basis`,
+`data_source`, `totals_by_currency` and `assessment_status`, plus `ranking_groups`
+keyed by currency and cost basis. Subscription `total_cost` is null for mixed
+currencies or an unread source. Ranking lives in each partition rather than one
+global subscription order. Resource group rows retain currency and partition rank.
+Selected subscription ids are the union of partition selections.
+
+Cost Management follows `properties.nextLink`. A page cap with a remaining
+continuation fails explicitly, so incomplete pages are never presented as a
+complete total. Empty unknown subscription scope is Not assessed.
+
+## Sources
+
+- [Cost query continuation and rows](https://learn.microsoft.com/javascript/api/@azure/arm-costmanagement/queryproperties)
+- [Consumption usage records](https://learn.microsoft.com/rest/api/consumption/usage-details/list)

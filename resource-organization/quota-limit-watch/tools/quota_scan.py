@@ -15,6 +15,14 @@ helpers can be unit tested without them. See references/checks-catalog.md.
 
 import json
 import sys
+import math
+from pathlib import Path
+
+for _parent in Path(__file__).resolve().parents:
+    _tools = _parent / "shared" / "tools"
+    if (_tools / "azure_http.py").is_file():
+        sys.path.insert(0, str(_tools))
+        break
 
 ARM_ENDPOINT = "https://management.azure.com"
 THRESHOLD_DEFAULT = 80.0
@@ -26,8 +34,8 @@ def utilization(current, limit):
     try:
         current, limit = float(current), float(limit)
     except (TypeError, ValueError):
-        return 0.0
-    return (current / limit * 100.0) if limit > 0 else 0.0
+        return None
+    return (current / limit * 100.0) if limit > 0 and current >= 0 and math.isfinite(current) and math.isfinite(limit) else None
 
 
 def band(percent):
@@ -43,7 +51,7 @@ def band(percent):
 
 def classify_usage(item, subscription, location, threshold):
     """Return a finding for a usage item near its limit, or None. Pure."""
-    name = item.get("name", {})
+    name = item.get("name") or {}
     quota = name.get("localizedValue") or name.get("value") or "unknown"
     try:
         current = float(item.get("currentValue", 0) or 0)
@@ -53,6 +61,8 @@ def classify_usage(item, subscription, location, threshold):
     if limit <= 0:
         return None
     percent = utilization(current, limit)
+    if percent is None:
+        return None
     if percent < threshold:
         return None
     severity = band(percent) if percent >= 80 else "Medium"
@@ -70,7 +80,7 @@ def classify_usage(item, subscription, location, threshold):
     }
 
 
-def build_report_data(findings, subscriptions_scanned, regions_checked, threshold, notes):
+def build_report_data(findings, subscriptions_scanned, regions_checked, threshold, notes, assessments=None):
     findings = sorted(findings, key=lambda f: f.get("_percent", 0), reverse=True)
     for finding in findings:
         finding["_command"] = None  # no safe automated increase; recommendation only
@@ -88,6 +98,12 @@ def build_report_data(findings, subscriptions_scanned, regions_checked, threshol
         for f in findings[:10]
     ]
     return {
+        "assessment_status": "Not assessed" if not regions_checked else "Partial" if notes or not assessments or any(a["state"] != "Complete" for a in assessments) else "Complete",
+        "assessments": assessments or [],
+        "sources": [
+            {"title": "View quotas", "url": "https://learn.microsoft.com/en-us/azure/quotas/view-quotas"},
+            {"title": "Storage regional usage", "url": "https://learn.microsoft.com/en-us/rest/api/storagerp/usages/list-by-location?view=rest-storagerp-2023-05-01"},
+        ],
         "title": "Quota and Limit Watch",
         "subtitle": "Headroom against Azure quotas and service limits.",
         "meta": {
@@ -113,7 +129,8 @@ def build_report_data(findings, subscriptions_scanned, regions_checked, threshol
         "method_notes": notes
         + [
             f"Reporting threshold: {threshold:.0f}%. Counters below it are not shown.",
-            "Counters with no finite limit are skipped.",
+            "Invalid, missing, zero or unbounded limits are not evidence of headroom. Coverage is reported separately from threshold findings.",
+            "Only selected compute, network and storage counters in observed regions are read, not all service limits or deployment capacity guarantees.",
             "The skill reads usage only; it never requests or changes a quota.",
         ],
     }
@@ -127,7 +144,7 @@ def _headers():
 
 
 def _get(headers, url):
-    import requests
+    import azure_http as requests
 
     response = requests.get(url, headers=headers, timeout=90)
     response.raise_for_status()
@@ -135,7 +152,7 @@ def _get(headers, url):
 
 
 def _run_graph(headers, query):
-    import requests
+    import azure_http as requests
 
     url = f"{ARM_ENDPOINT}/providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01"
     rows, skip_token = [], None
@@ -153,7 +170,7 @@ def _run_graph(headers, query):
 
 
 def _list_subscription_names(headers):
-    import requests
+    import azure_http as requests
 
     url = f"{ARM_ENDPOINT}/subscriptions?api-version=2022-12-01"
     names = {}
@@ -169,6 +186,8 @@ def _list_subscription_names(headers):
 
 def main(threshold: float = THRESHOLD_DEFAULT) -> dict:
     threshold = float(threshold)
+    if not math.isfinite(threshold) or not 0 < threshold <= 100:
+        raise ValueError("Threshold must be greater than 0 and at most 100.")
     headers = _headers()
     notes = []
     sub_names = {}
@@ -184,7 +203,7 @@ def main(threshold: float = THRESHOLD_DEFAULT) -> dict:
 
     findings = []
     subs, regions, failures = set(), set(), 0
-    seen_storage = set()
+    assessments = []
     for pair in pairs:
         sub = pair.get("subscriptionId", "")
         location = pair.get("location", "")
@@ -196,29 +215,32 @@ def main(threshold: float = THRESHOLD_DEFAULT) -> dict:
         endpoints = [
             f"{ARM_ENDPOINT}/subscriptions/{sub}/providers/Microsoft.Compute/locations/{location}/usages?api-version=2023-07-01",
             f"{ARM_ENDPOINT}/subscriptions/{sub}/providers/Microsoft.Network/locations/{location}/usages?api-version=2023-09-01",
+            f"{ARM_ENDPOINT}/subscriptions/{sub}/providers/Microsoft.Storage/locations/{location}/usages?api-version=2023-05-01",
         ]
         for url in endpoints:
+            state = "Not assessed"
             try:
-                for item in _get(headers, url):
+                items = _get(headers, url)
+                valid = 0
+                for item in items:
+                    if utilization(item.get("currentValue"), item.get("limit")) is None:
+                        notes.append(f"A quota counter has unknown or nonpositive limit in {location}.")
+                        continue
+                    valid += 1
                     finding = classify_usage(item, sub_label, location, threshold)
                     if finding:
                         findings.append(finding)
+                if valid:
+                    state = "Complete" if valid == len(items) else "Partial"
+                else:
+                    notes.append(f"No finite counters assessed for {location}.")
             except Exception:  # noqa: BLE001
                 failures += 1
-        if sub not in seen_storage:
-            seen_storage.add(sub)
-            try:
-                url = f"{ARM_ENDPOINT}/subscriptions/{sub}/providers/Microsoft.Storage/usages?api-version=2018-07-01"
-                for item in _get(headers, url):
-                    finding = classify_usage(item, sub_label, "(subscription)", threshold)
-                    if finding:
-                        findings.append(finding)
-            except Exception:  # noqa: BLE001
-                failures += 1
+            assessments.append({"subscription": sub, "location": location, "endpoint": url, "state": state})
 
     if failures:
         notes.append(f"{failures} usage query(ies) could not be read and were skipped.")
-    return build_report_data(findings, len(subs), len(regions), threshold, notes)
+    return build_report_data(findings, len(subs), len(regions), threshold, notes, assessments)
 
 
 if __name__ == "__main__":

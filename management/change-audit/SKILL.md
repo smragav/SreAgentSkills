@@ -22,17 +22,17 @@ Use this skill when the user asks to:
 ## Operating principles
 
 - Read only. This skill reads the Activity Log. It never rolls back or re applies a change; it surfaces the changes and their apparent effect.
-- Default Reader scope. It reads the Activity Log across the subscriptions this agent can read. If a read is denied, it records the scope as not assessed and continues. See references/permissions-and-scope.md.
+- Approved read scope. It reads the Activity Log across the subscriptions this agent can read. If a read is denied, it records the scope as not assessed and continues. See references/permissions-and-scope.md.
 - Correlation is not proof. A change that preceded a degradation is a lead, not a verdict. Every correlation carries its timing evidence so a human can judge it.
 
 ## Workflow
 
-The scan tool (tools/change_scan.py) and the shared report renderer (tools/report_render.py) are bundled with this skill. Run them with RunInTerminal using the Python in the agent runtime. Both authenticate with the agent managed identity.
+The scan tool and shared renderer are bundled with this skill. The collector uses the shared deterministic identity helper; the renderer formats JSON locally. Validate host dependencies and permissions before execution.
 
 ### Phase 1: Read and correlate
 
 1. Run python tools/change_scan.py [days] with RunInTerminal (seven days by default). It reads the Activity Log across accessible subscriptions, separates administrative changes from resource health events, and correlates each health degradation with the changes on the same resource or resource group in the preceding window, following references/checks-catalog.md.
-2. It also surfaces deletes and failed changes that were not linked to a degradation, since those are worth a look on their own.
+2. Retain all collected writes, deletes and actions, including successful changes with no health link. Correlate exact resource IDs, or resource group plus subscription, never a resource group name alone. Resource group proximity is not a dependency or proof of causation.
 
 ### Phase 2: Produce the report
 
@@ -41,10 +41,26 @@ The scan tool (tools/change_scan.py) and the shared report renderer (tools/repor
 
 ## Scenario coverage
 
-This skill also answers 5 customer scenarios in the Management category (changes on a resource, changes by users, all writes, who changed a firewall or NSG rule, rollback commands). Open references/scenarios.md when the ask matches one of them: it holds the sample prompt, the run mode, and whether the skill covers it with built in checks or a guided read only prompt.
+This skill implements its documented checks, not every related scenario. Use the related skills for their complete evidence workflows. See [scenario routing](./references/scenarios.md).
+
 
 ## Expected output
 
-- Primary: a self contained HTML change audit report, covering findings by severity and by subscription, and a table of the suspect changes with the degradation each one preceded, plus the deletes and failed changes.
+- Primary: a self contained report retaining all collected administrative changes, with temporal candidates, deletes and failures highlighted. The 40 page collection cap and any query failure must be visible as incomplete.
 - Inline: changes linked to a degradation, deletes, and failed changes, with the timing evidence.
 - Every correlation carries the change, the caller, the degradation it preceded, and the time gap. Nothing is rolled back; the report is for a human to judge and act on.
+
+## Audit limits and sources
+
+Activity Log is a control plane source, not a complete audit of data plane activity, SQL statements, guest configuration or application changes. Collect service specific logs separately when those are in scope.
+
+- [Activity Log](https://learn.microsoft.com/azure/azure-monitor/essentials/activity-log), verified: records control plane operations.
+- [Control plane and data plane](https://learn.microsoft.com/azure/azure-resource-manager/management/control-plane-and-data-plane).
+
+## Assessment and customer sharing
+
+Confirm the explicit customer scope and UTC window before collection. Accessible resources are not automatically approved scope. For a tool that enumerates all visible subscriptions, use an identity restricted to the approved scope or the related skill's scoped commands.
+
+Follow [assessment states and limits](./references/assessment-contract.md), [permissions](./references/permissions-and-scope.md), and [customer sharing review](./references/customer-sharing.md), bundled during deployment. The shared renderer produces a sanitized draft by default; `--include-identifiers` requires an explicitly approved customer audience. Review custom exports with the same checklist.
+
+Configure the host using [governance settings](./references/governance.json). General terminal access is not inherently read only. Never apply changes, schedule work, upload files or send messages without separate explicit approval.

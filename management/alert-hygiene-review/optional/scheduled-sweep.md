@@ -12,8 +12,8 @@ Create this in Scheduled tasks. A weekly review keeps the pager trustworthy by c
 Run an alert hygiene review across the subscriptions this agent can read.
 
 1. Use the alert-hygiene-review skill.
-2. Run alert_hygiene.py over a seven day window to group fired alerts by rule and compute the fire count, auto resolved share, and unacknowledged share, plus the disabled rules.
-3. Produce the self contained HTML report and post the file link with a short summary: alerts fired, the noisiest rules, cry wolf rules, disabled rules, and the top tuning actions.
+2. Run alert_hygiene.py over seven days to measure fire count, monitor resolution, user closure, timestamp proven rapid resolution and current New state separately. Closure does not prove inaction.
+3. Produce a sanitized draft with assessment status, noisy rules, measured rapid resolutions, disabled rules and collection caps. Obtain sharing approval before publishing a link.
 4. If a previous run exists in memory, add a short note on whether the noisiest rules changed and whether total fires rose or fell.
 
 Do not change or disable any alert rule. Provide tuning recommendations only, for a human to apply.

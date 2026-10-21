@@ -30,6 +30,18 @@ Per category, and overall:
 
 - No-go: any Critical or High finding.
 - Caution: only Medium findings.
-- Go: no findings.
+- Incomplete: any required check is not assessed, failed, or the target scope cannot be confirmed. This blocks Go even when there are no findings.
+- Go: complete reads, confirmed nonempty scope, finite capacity counters and no findings.
 
 Overall is the worst category verdict. Clear the blocking findings, then run the check again before shipping.
+
+Each configuration query and each capacity endpoint has a recorded assessment state. No matching resources, a failed location discovery, empty usage data, invalid counters or a zero limit must not be treated as spare capacity. An empty result from a risk query is clean only when target inventory visibility has been established. Resource Graph visibility is not proof that the identity can see every intended resource.
+
+These six configuration signals and two usage endpoint families do not assess workload topology, actual zone failover, NSG effective rules or all quotas. One zonal VM or availability set membership alone is not workload redundancy. A quota reading does not guarantee SKU allocation or sufficient headroom for the proposed change.
+
+## Sources and validation
+
+- [View quotas](https://learn.microsoft.com/en-us/azure/quotas/view-quotas).
+- [VM reliability](https://learn.microsoft.com/en-us/azure/reliability/reliability-virtual-machines).
+
+Regression tests use mocked collection. No live scope, deployment or endpoint response was validated.

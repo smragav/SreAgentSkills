@@ -1,6 +1,6 @@
 ---
 name: finops-cost-optimizer
-description: Use when the user asks for a FinOps review, Azure cost optimization, cost savings, reducing spend, rightsizing, idle or forgotten resources, or "where is my Azure money going". Ranks the subscriptions and resource groups the agent can read by spend, detects waste across seven dimensions, enumerates idle and orphaned resources and scores them by confidence to terminate, ranks by savings, and produces a self contained HTML report with copyable delete commands.
+description: Use when the user asks for a FinOps review, Azure cost optimization, cost savings, reducing spend, rightsizing, idle or forgotten resources, or "where is my Azure money going". Ranks approved subscriptions and resource groups by spend within currency and cost basis, reviews seven waste dimensions and potential idle or orphaned resources, and produces an evidence report. Review confidence is never permission to delete; operator commands are optional.
 tools:
   - RunAzCliReadCommands
   - RunInTerminal
@@ -21,19 +21,21 @@ Use this skill when the user asks to:
 
 ## Operating principles
 
-- Read only. This skill never changes or deletes resources. It proposes recommendations and provides operator ready delete commands for termination candidates, but a human reviews and runs them; the agent runs none of them.
-- Default Reader scope. It analyzes the subscriptions and resource groups this agent can already read, and starts within that existing access. If a read returns access denied or authorization failed, it may ask the user to grant temporary access to that scope, but it never assigns roles itself. Elevation is always the user granting temporary access out of band. If the user declines, skip that item, record it as not assessed because of insufficient access, and continue with the rest. See references/permissions-and-scope.md.
-- Evidence first. Every recommendation carries its evidence, an estimated monthly saving, and a risk rating. Every termination candidate carries its evidence, a lower bound saving, and a confidence to terminate score. Never present a destructive action as the default.
+- Read only. This skill never changes or deletes resources. It proposes recommendations. Destructive operator commands are optional and require a separate request and the usual owner and change approvals; the agent runs none of them.
+- Approved read scope. It analyzes the subscriptions and resource groups this agent can already read, and starts within that existing access. If a read returns access denied or authorization failed, it may ask the user to grant temporary access to that scope, but it never assigns roles itself. Elevation is always the user granting temporary access out of band. If the user declines, skip that item, record it as not assessed because of insufficient access, and continue with the rest. See references/permissions-and-scope.md.
+- Evidence first. Every recommendation carries its evidence, currency, estimate window, cost basis, and risk. A confidence score ranks review evidence only, never permission to delete. Confirm owners, dependencies, retention and change approval before any destructive action. Names alone do not prove nonproduction or idleness.
+- Approve the subscription scope before collection. Accessible scope is not automatically approved scope. These playbook checks do not enforce host tool authorization.
+- Select identity explicitly: `AZURE_CLIENT_ID` for a user assigned managed identity, `SRE_IDENTITY_MODE=system-assigned` for system assigned managed identity, or `SRE_IDENTITY_MODE=developer` only for an explicitly approved local developer run. Missing configuration fails closed; no ambient discovery or silent fallback.
 
 ## Workflow
 
-The three Python helpers (tools/cost_rank.py, tools/commitment_recommendations.py, tools/generate_report.py) are bundled with this skill. Run them with the RunInTerminal tool using the Python in the agent runtime, which already has azure-identity and requests. The report generator uses only the Python standard library. They authenticate to Azure with the agent managed identity. Follow these four phases in order.
+The three Python helpers (tools/cost_rank.py, tools/commitment_recommendations.py, tools/generate_report.py) are bundled with this skill. Run them with the RunInTerminal tool using the Python in the agent runtime, after verifying that the host provides approved azure-identity and requests packages. The report generator uses only the Python standard library. They authenticate to Azure with the agent managed identity. Follow these four phases in order.
 
 ### Phase 1: Narrow scope by spend
 
 1. Run the helper with RunInTerminal: python tools/cost_rank.py. It queries Azure Cost Management at subscription scope for amortized spend over the last 30 days, groups by resource group, and applies the ranking rules in references/ranking-method.md.
 2. It returns the ranked subscriptions, the selected top decile (with a floor so small tenants still return results), and for each selected subscription the ranked resource groups with their own selected top decile.
-3. If the helper reports that it used the Consumption fallback, tell the user that cost data came from usage records because the Cost Management query was not available under the current permissions.
+3. Rank within each currency and cost basis, never across them. The helper follows Cost Management `properties.nextLink`; a continuation beyond the page cap fails that source explicitly. Consumption fallback is usage detail actual cost, not an equivalent amortized baseline, and makes the assessment Partial. Failed subscriptions are Not assessed, never zero cost.
 
 ### Phase 2: Detect waste and idle resources
 
@@ -51,7 +53,7 @@ Savings recommendations, across the dimensions in references/checks-catalog.md:
 
 Use the RunAzCliReadCommands tool for the read only Azure CLI commands in the catalog. Record a finding with: resource id, dimension, current configuration, proposed change, estimated monthly saving, risk rating, and evidence.
 
-Termination candidates, following references/idle-detection.md: enumerate idle and orphaned resources across every accessible subscription with Azure Resource Graph (az graph query through RunAzCliReadCommands), score each one by confidence to terminate, price it as a lower bound, and record a candidate with its resource details, saving, confidence, reason, next step, and an az delete command. Where Azure Monitor metrics or Activity Logs are not readable, rely on association, age, and naming heuristics only and note the limitation.
+Termination candidates, following references/idle-detection.md: enumerate within approved scope, record association and age evidence, and price individually. Where metrics or Activity Logs cannot be read, mark idleness unknown. Naming is a cautionary hint, not proof. Delete commands are destructive operator instructions, never read only checks, and are not generated automatically from resource ids by the renderer.
 
 ### Phase 3: Rank
 
@@ -59,7 +61,7 @@ Score every finding with the priority formula in references/ranking-method.md an
 
 ### Phase 4: Produce the report
 
-1. Assemble the report_data described in references/report-layout.md, including both the findings and the termination candidates list.
+1. Assemble the report_data described in references/report-layout.md. Produce separate reports per currency. Reconcile Advisor, resource cleanup, rightsizing and commitments against the same selected scope, window and cost basis. Reservations and savings plans can be alternatives for the same usage; do not add their projections as realizable savings. Preserve individual opportunities when overlap or timing is unknown. Set `totals.savings_reconciled=true` only with `reconciliation_notes` explaining those choices.
 2. Run python tools/generate_report.py with RunInTerminal, passing the assembled report_data as JSON on standard input. It writes a self contained HTML report to /mnt/data and returns the path. If the user wants a shareable link, store the file with the SaveFileToBlob tool.
 3. Present the report, then a short inline summary: total analyzed spend, total estimated monthly savings, findings by priority, termination candidates by confidence band, the top three recommendations, the top three termination candidates, and any scopes or dimensions not assessed because of insufficient access.
 
@@ -69,10 +71,25 @@ Only if the user asks for it, file tracking issues from the findings using refer
 
 ## Scenario coverage
 
-This skill also answers 12 customer scenarios in the Billing and Cost category. Open references/scenarios.md when the ask matches one of them: it holds the sample prompt, the run mode, and whether the skill covers it with built in checks or a guided read only prompt.
+This skill implements its documented checks, not every related scenario. Use the related skills for their complete evidence workflows. See [scenario routing](./references/scenarios.md).
+
 
 ## Expected output
 
 - Primary: a single self contained HTML report delivered as a file link, covering the FinOps overview, the termination candidates, and the savings recommendations.
 - Inline: a short summary with total spend analyzed, total estimated monthly savings, findings by priority, termination candidates by confidence band, and the top recommendations and candidates.
-- Every recommendation includes evidence, an estimated monthly saving, and a risk rating. Every termination candidate includes evidence, a lower bound saving, a confidence to terminate score, and a copyable delete command the agent never runs.
+- Every recommendation includes evidence, currency, estimate basis and risk. Every review candidate includes evidence, an individual saving estimate where known and a confidence score that never authorizes deletion. Operator requested commands are optional and never executed by the agent.
+
+## Sources
+
+- [Owned checks, aggregation rules and verified source URLs](references/checks-catalog.md)
+- [Cost query pagination](https://learn.microsoft.com/javascript/api/@azure/arm-costmanagement/queryproperties)
+- [Cost visibility and permissions](https://learn.microsoft.com/azure/cost-management-billing/costs/assign-access-acm-data)
+
+## Assessment and customer sharing
+
+Confirm the explicit customer scope and UTC window before collection. Accessible resources are not automatically approved scope. For a tool that enumerates all visible subscriptions, use an identity restricted to the approved scope or the related skill's scoped commands.
+
+Follow [assessment states and limits](./references/assessment-contract.md), [permissions](./references/permissions-and-scope.md), and [customer sharing review](./references/customer-sharing.md), bundled during deployment. The shared renderer produces a sanitized draft by default; `--include-identifiers` requires an explicitly approved customer audience. Review custom exports with the same checklist.
+
+Configure the host using [governance settings](./references/governance.json). General terminal access is not inherently read only. Never apply changes, schedule work, upload files or send messages without separate explicit approval.

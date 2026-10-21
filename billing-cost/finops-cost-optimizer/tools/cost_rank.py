@@ -14,9 +14,30 @@ the pure ranking helper can be imported and unit tested without those packages.
 """
 
 import math
+import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+
+def _bootstrap_shared_tools():
+    here = Path(__file__).resolve().parent
+    candidates = [here, here / "tools"] + [parent / "shared" / "tools" for parent in list(here.parents)[:5]]
+    for candidate in candidates:
+        if (candidate / "azure_http.py").is_file():
+            if str(candidate) not in sys.path:
+                sys.path.insert(0, str(candidate))
+            return
+    raise ModuleNotFoundError("Bundle shared tools, including azure_http.py, with this collector.")
+
+
+_bootstrap_shared_tools()
 
 ARM_ENDPOINT = "https://management.azure.com"
+MAX_PAGES = 200
+SOURCES = [
+    {"title": "Cost Management query pagination", "url": "https://learn.microsoft.com/javascript/api/@azure/arm-costmanagement/queryproperties"},
+    {"title": "Consumption usage details", "url": "https://learn.microsoft.com/rest/api/consumption/usage-details/list"},
+]
 
 
 def _select_top(items, top_percent, minimum):
@@ -43,7 +64,7 @@ def _token():
 
 
 def _list_subscriptions(headers):
-    import requests
+    import azure_http as requests
 
     url = f"{ARM_ENDPOINT}/subscriptions?api-version=2022-12-01"
     subscriptions = []
@@ -66,10 +87,10 @@ def _list_subscriptions(headers):
 def _query_cost_management(headers, subscription_id, start, end):
     """Amortized cost grouped by resource group at subscription scope.
 
-    Returns (rows, currency) where rows is a list of (resource_group, cost).
+    Returns (rows, currency) with (resource_group, cost, currency) rows.
     Raises on failure so the caller can fall back to Consumption.
     """
-    import requests
+    import azure_http as requests
 
     url = (
         f"{ARM_ENDPOINT}/subscriptions/{subscription_id}"
@@ -85,29 +106,31 @@ def _query_cost_management(headers, subscription_id, start, end):
             "grouping": [{"type": "Dimension", "name": "ResourceGroupName"}],
         },
     }
-    response = requests.post(url, headers=headers, json=payload, timeout=120)
-    response.raise_for_status()
-    body = response.json()
-    properties = body.get("properties", {})
-    columns = [c["name"] for c in properties.get("columns", [])]
-    cost_index = columns.index("Cost") if "Cost" in columns else 0
-    rg_index = columns.index("ResourceGroupName") if "ResourceGroupName" in columns else None
-    currency_index = columns.index("Currency") if "Currency" in columns else None
     rows = []
-    currency = None
-    for row in properties.get("rows", []):
-        resource_group = row[rg_index] if rg_index is not None else "(unassigned)"
-        raw_cost = row[cost_index] if cost_index < len(row) else 0.0
-        cost = float(raw_cost) if raw_cost is not None else 0.0
-        if currency_index is not None and currency_index < len(row):
-            currency = row[currency_index]
-        rows.append((resource_group or "(unassigned)", cost))
-    return rows, currency
+    for _ in range(MAX_PAGES):
+        if not url.startswith(ARM_ENDPOINT + "/"):
+            raise ValueError("Unexpected Cost Management continuation host.")
+        response = requests.post(url, headers=headers, json=payload, timeout=120)
+        response.raise_for_status()
+        properties = response.json().get("properties", {})
+        columns = [c["name"] for c in properties.get("columns", [])]
+        cost_index = columns.index("Cost")
+        rg_index = columns.index("ResourceGroupName")
+        currency_index = columns.index("Currency")
+        for row in properties.get("rows", []):
+            if row[cost_index] is None:
+                raise ValueError("Cost Management row cost unknown; baseline not established.")
+            rows.append((row[rg_index] or "(unassigned)", float(row[cost_index]), row[currency_index] or "Unknown"))
+        url = properties.get("nextLink")
+        if not url:
+            currencies = {row[2] for row in rows}
+            return rows, next(iter(currencies)) if len(currencies) == 1 else None
+    raise RuntimeError("Cost Management pagination incomplete: page limit reached.")
 
 
 def _query_consumption(headers, subscription_id, start, end):
     """Fallback: aggregate Consumption usage details cost by resource group."""
-    import requests
+    import azure_http as requests
 
     url = (
         f"{ARM_ENDPOINT}/subscriptions/{subscription_id}"
@@ -116,21 +139,28 @@ def _query_consumption(headers, subscription_id, start, end):
         f" and properties/usageEnd le '{end}'"
     )
     totals = {}
-    currency = None
     pages = 0
-    while url and pages < 50:
+    while url and pages < MAX_PAGES:
+        if not url.startswith(ARM_ENDPOINT + "/"):
+            raise ValueError("Unexpected Consumption continuation host.")
         response = requests.get(url, headers=headers, timeout=120)
         response.raise_for_status()
         body = response.json()
         for item in body.get("value", []):
             props = item.get("properties", {})
             resource_group = props.get("resourceGroup") or props.get("resourceGroupName") or "(unassigned)"
-            cost = props.get("cost", props.get("costInBillingCurrency", 0.0)) or 0.0
-            currency = props.get("billingCurrency", props.get("currency", currency))
-            totals[resource_group] = totals.get(resource_group, 0.0) + float(cost)
+            cost = props.get("cost", props.get("costInBillingCurrency"))
+            if cost is None:
+                raise ValueError("Consumption row cost unknown; baseline not established.")
+            currency = props.get("billingCurrency") or props.get("billingCurrencyCode") or props.get("currency") or "Unknown"
+            key = (resource_group, currency)
+            totals[key] = totals.get(key, 0.0) + float(cost)
         url = body.get("nextLink")
         pages += 1
-    return [(rg, cost) for rg, cost in totals.items()], currency
+    if url:
+        raise RuntimeError("Consumption pagination incomplete: page limit reached.")
+    currencies = {key[1] for key in totals}
+    return [(rg, cost, currency) for (rg, currency), cost in totals.items()], next(iter(currencies)) if len(currencies) == 1 else None
 
 
 def main(
@@ -155,7 +185,6 @@ def main(
     end = end_date.isoformat()
 
     notes = []
-    data_source = "CostManagement"
 
     if subscription_ids:
         subscriptions = [{"id": sub, "name": sub} for sub in subscription_ids]
@@ -163,32 +192,60 @@ def main(
         try:
             subscriptions = _list_subscriptions(headers)
         except Exception as error:  # noqa: BLE001 - surface the failure to the agent
-            return {"error": f"Could not list subscriptions: {error}", "subscriptions": []}
+            return {"error": f"Could not list subscriptions: {error}", "subscriptions": [], "assessment_status": "Not assessed", "sources": SOURCES}
 
     currencies = set()
     resource_groups = {}
+    ranking_groups = {}
+    assessed = 0
     for sub in subscriptions:
         rows = []
-        currency = None
+        sub["data_source"] = "CostManagement"
+        sub["cost_basis"] = "AmortizedCost"
+        sub["assessment_status"] = "Complete"
         try:
             rows, currency = _query_cost_management(headers, sub["id"], start, end)
         except Exception as cost_error:  # noqa: BLE001 - fall back to Consumption
             try:
                 rows, currency = _query_consumption(headers, sub["id"], start, end)
-                data_source = "Consumption"
-                notes.append(f"Subscription {sub['id']}: used Consumption fallback ({cost_error}).")
+                sub["data_source"] = "Consumption"
+                sub["cost_basis"] = "UsageDetailsActualCost"
+                sub["assessment_status"] = "Partial"
+                notes.append(f"Subscription {sub['id']}: used Consumption fallback, not an amortized baseline ({cost_error}).")
             except Exception as consumption_error:  # noqa: BLE001
                 notes.append(f"Subscription {sub['id']}: no cost data ({consumption_error}).")
-        if currency:
+                sub["assessment_status"] = "Not assessed"
+        if sub["assessment_status"] != "Not assessed":
+            assessed += 1
+        totals = {}
+        rg_totals = {}
+        for rg, cost, currency in rows:
             currencies.add(currency)
-        rg_items = [{"name": rg, "cost": round(cost, 2)} for rg, cost in rows]
-        rg_items.sort(key=lambda item: item["cost"], reverse=True)
-        _select_top(rg_items, top_percent, min_resource_groups)
+            totals[currency] = totals.get(currency, 0.0) + cost
+            rg_totals[(rg, currency)] = rg_totals.get((rg, currency), 0.0) + cost
+        rg_items = []
+        for currency in sorted(totals):
+            group = sorted(
+                [{"name": rg, "cost": round(cost, 2), "currency": curr} for (rg, curr), cost in rg_totals.items() if curr == currency],
+                key=lambda item: item["cost"], reverse=True,
+            )
+            _select_top(group, top_percent, min_resource_groups)
+            rg_items.extend(group)
+            key = f"{currency}:{sub['cost_basis']}"
+            ranking_groups.setdefault(key, []).append({"id": sub["id"], "name": sub["name"], "cost": totals[currency], "currency": currency})
         resource_groups[sub["id"]] = rg_items
-        sub["total_cost"] = round(sum(item["cost"] for item in rg_items), 2)
+        sub["totals_by_currency"] = {c: round(v, 2) for c, v in totals.items()}
+        sub["currency"] = next(iter(totals)) if len(totals) == 1 else None
+        sub["total_cost"] = round(next(iter(totals.values())), 2) if len(totals) == 1 else None
+        sub["selected"] = False
 
-    subscriptions.sort(key=lambda item: item.get("total_cost", 0.0), reverse=True)
-    _select_top(subscriptions, top_percent, min_subscriptions)
+    selected = set()
+    for group in ranking_groups.values():
+        group.sort(key=lambda item: item["cost"], reverse=True)
+        _select_top(group, top_percent, min_subscriptions)
+        selected.update(item["id"] for item in group if item["selected"])
+    for sub in subscriptions:
+        sub["selected"] = sub["id"] in selected
 
     if len(currencies) > 1:
         notes.append(f"Mixed currencies across subscriptions: {sorted(currencies)}. Totals are not converted.")
@@ -197,10 +254,13 @@ def main(
     selected_resource_groups = {sid: resource_groups.get(sid, []) for sid in selected_ids}
 
     return {
+        "assessment_status": "Not assessed" if not assessed else ("Partial" if notes or "Unknown" in currencies else "Complete"),
+        "sources": SOURCES,
         "lookback_days": int(lookback_days),
         "window": {"from": start, "to": end},
         "currency": sorted(currencies)[0] if len(currencies) == 1 else None,
-        "data_source": data_source,
+        "data_source": next(iter({s["data_source"] for s in subscriptions})) if len({s["data_source"] for s in subscriptions}) == 1 else "Mixed",
+        "ranking_groups": ranking_groups,
         "subscriptions": subscriptions,
         "selected_subscriptions": selected_ids,
         "resource_groups": selected_resource_groups,

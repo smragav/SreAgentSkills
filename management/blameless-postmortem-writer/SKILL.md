@@ -24,6 +24,7 @@ Use this skill when the user asks to:
 - Blameless. Describe what the system did and why it was possible, not who did it. Replace names of people with roles and systems. Assume everyone acted reasonably with the information they had.
 - Read only. This skill reads incident evidence and writes a document. It changes nothing in Azure.
 - Evidence based and honest. The timeline and impact come from evidence. Where a fact is unknown, say so and make finding it an action item rather than guessing.
+- Review before sharing. Generated artifacts are drafts. Sanitize identifiers and credentials, verify impact and evidence with the incident owner, and obtain approval before any external sharing. This skill never sends email, chat messages or external notifications automatically.
 
 ## Workflow
 
@@ -40,15 +41,30 @@ Follow references/writing-guide.md. State the root cause as a chain of contribut
 
 ### Phase 3: Produce the document
 
-1. Assemble the postmortem object described in references/postmortem-template.md and pipe it into python tools/postmortem_render.py with RunInTerminal. It writes a clean self contained HTML document and returns the path. Store it with SaveFileToBlob for a link.
+1. Assemble the postmortem object described in references/postmortem-template.md and pipe it into python tools/postmortem_render.py with RunInTerminal. Default output uses the bundled sharing policy to alias identifiers and redact credentials. Use `--include-identifiers` only for an explicitly requested internal draft; credentials remain redacted. Review the file before publishing with SaveFileToBlob or sharing it externally.
 2. Present the document, then a short inline summary: the incident in one line, the impact, the root cause, and the action items with owners.
 
 ## Scenario coverage
 
-This skill also answers 1 customer scenario in the Management category (post incident review automation). Open references/scenarios.md when the ask matches it: it holds the sample prompt, the run mode, and whether the skill covers it with built in checks or a guided read only prompt.
+This skill implements its documented checks, not every related scenario. Use the related skills for their complete evidence workflows. See [scenario routing](./references/scenarios.md).
+
 
 ## Expected output
 
 - Primary: a self contained HTML postmortem with summary, impact, timeline, root cause, contributing factors, detection and resolution, lessons, and action items.
 - Inline: the one line summary, impact, root cause, and the action items with owners and dates.
 - The language stays blameless throughout: systems and conditions, not individuals. Unknown facts are named and turned into action items rather than guessed.
+- Carry `assessment_status` and evidence `sources` into the document. Missing or failed evidence collection is Partial or Not assessed, never a confident empty state. Record human review separately from collection status.
+
+## Sources
+
+- Incident evidence supplied by the user or the triage collector, listed in each generated document.
+- [Writing method](references/writing-guide.md), preserved by the renderer.
+
+## Assessment and customer sharing
+
+Confirm the explicit customer scope and UTC window before collection. Accessible resources are not automatically approved scope. For a tool that enumerates all visible subscriptions, use an identity restricted to the approved scope or the related skill's scoped commands.
+
+Follow [assessment states and limits](./references/assessment-contract.md), [permissions](./references/permissions-and-scope.md), and [customer sharing review](./references/customer-sharing.md), bundled during deployment. The shared renderer produces a sanitized draft by default; `--include-identifiers` requires an explicitly approved customer audience. Review custom exports with the same checklist.
+
+Configure the host using [governance settings](./references/governance.json). General terminal access is not inherently read only. Never apply changes, schedule work, upload files or send messages without separate explicit approval.

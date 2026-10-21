@@ -43,6 +43,33 @@ def test_action_item_type_colour():
     assert "Detect" in doc
 
 
+def test_draft_is_sanitized_and_never_claims_external_send():
+    data = {**SAMPLE, "summary": "Contact owner@example.com for /subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg.",
+            "password": "test-secret-value"}
+    doc = pm.render_html(data)
+    assert "owner@example.com" not in doc
+    assert "11111111-1111" not in doc
+    assert "test-secret-value" not in doc
+    assert "Draft: human review required" in doc
+    assert "No external send is performed" in doc
+    assert "owner@example.com" in pm.render_html(data, include_identifiers=True)
+
+
+def test_plain_text_is_escaped_and_unknown_assessment_is_visible():
+    doc = pm.render_html({"title": "<script>alert(1)</script>"})
+    assert "<script>alert(1)</script>" not in doc
+    assert "&lt;script&gt;" in doc
+    assert "Not assessed" in doc
+
+
+def test_failed_evidence_cannot_be_marked_complete():
+    data = {**SAMPLE, "assessment_status": "Complete", "collection_errors": ["Activity Log denied"],
+            "sources": [{"title": "Incident evidence", "url": "https://example.com/incident"}]}
+    doc = pm.render_html(data)
+    assert "Partial" in doc and "Activity Log denied" in doc and "Sources" in doc
+    assert pm._reviewed_input({"assessment_status": "Complete"})["assessment_status"] == "Partial"
+
+
 if __name__ == "__main__":
     for name, function in sorted(globals().items()):
         if name.startswith("test_") and callable(function):

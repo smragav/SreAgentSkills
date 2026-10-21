@@ -22,17 +22,18 @@ Use this skill when the user asks to:
 ## Operating principles
 
 - Read only. This skill reads alert history and resource health events. It changes nothing.
-- Default Reader scope. It reads across the subscriptions this agent can read. If a read is denied, it records the scope as not assessed and continues. See references/permissions-and-scope.md.
-- Evidence first. Every repeat offender carries its incident count and the signals behind it (how many alerts and how many health degradations), so the ranking is explainable.
+- Approved read scope. It reads across the subscriptions this agent can read. If a read is denied, it records the scope as not assessed and continues. See references/permissions-and-scope.md.
+- Evidence first. Every repeat offender carries a resource signal count, not a distinct incident count. One incident can emit many alerts and health degradations.
 
 ## Workflow
 
-The scan tool (tools/pattern_scan.py) and the shared report renderer (tools/report_render.py) are bundled with this skill. Run them with RunInTerminal using the Python in the agent runtime. Both authenticate with the agent managed identity.
+The scan tool and shared renderer are bundled with this skill. The collector uses the shared deterministic identity helper; the renderer formats JSON locally. Validate host dependencies and permissions before execution.
 
 ### Phase 1: Aggregate the history
 
-1. Run python tools/pattern_scan.py [days] with RunInTerminal (thirty days by default). It reads the fired alerts and the resource health degradations across accessible subscriptions, aggregates them by resource, and ranks the resources by total incident count, following references/checks-catalog.md.
-2. A resource at or above the repeat threshold (three incidents by default) is a repeat offender. The report groups offenders by resource type so the pattern is visible.
+1. Run python tools/pattern_scan.py [days] with RunInTerminal (default 30). Choose exactly 1, 7 or 30 days. Both sources receive identical UTC start and end boundaries, using alert `customTimeRange` and an Activity Log timestamp filter. Unsupported windows are rejected, not silently rounded. The alert API accepts custom times within its 30 day retention; rejected requests remain incomplete, never silently narrowed.
+2. A resource with at least three signal occurrences is a repeat offender. Duplicate alert IDs and health event IDs are removed within each source. Cross source signals are not correlated into distinct incidents. Use an incident system before claiming incident totals.
+3. Each source has a 40 page cap. Continuation outstanding, access failures and unknown scope mark the report Partial or Not assessed.
 
 ### Phase 2: Produce the report
 
@@ -41,6 +42,19 @@ The scan tool (tools/pattern_scan.py) and the shared report renderer (tools/repo
 
 ## Expected output
 
-- Primary: a self contained HTML patterns report, covering incidents by resource type, the top repeat offenders, and a table of every offender with its incident count and the signals behind it.
+- Primary: a self contained HTML patterns report, covering signals by resource type, repeat offenders and the alerts and health degradations behind the count.
 - Inline: the top repeat offenders, the worst resource types, and the suggested focus.
-- Every offender carries its incident count and the signals (alerts and health degradations) behind it. The report points at where to invest; a human decides and acts.
+- The report points at where to investigate. Signal counts alone do not prove a workload is unreliable or represent distinct incidents.
+
+## Sources
+
+- [Alert instance retention](https://learn.microsoft.com/azure/azure-monitor/alerts/alerts-manage-alert-instances), verified: alert instances have a 30 day retention period.
+- [Activity Log](https://learn.microsoft.com/azure/azure-monitor/essentials/activity-log).
+
+## Assessment and customer sharing
+
+Confirm the explicit customer scope and UTC window before collection. Accessible resources are not automatically approved scope. For a tool that enumerates all visible subscriptions, use an identity restricted to the approved scope or the related skill's scoped commands.
+
+Follow [assessment states and limits](./references/assessment-contract.md), [permissions](./references/permissions-and-scope.md), and [customer sharing review](./references/customer-sharing.md), bundled during deployment. The shared renderer produces a sanitized draft by default; `--include-identifiers` requires an explicitly approved customer audience. Review custom exports with the same checklist.
+
+Configure the host using [governance settings](./references/governance.json). General terminal access is not inherently read only. Never apply changes, schedule work, upload files or send messages without separate explicit approval.

@@ -13,7 +13,9 @@ Run an identity and access hygiene review across the subscriptions this agent ca
 
 1. Use the identity-access-hygiene skill.
 2. Run identity_access.py to read role assignments and classic administrators, keep the privileged roles, and classify each finding.
-3. Produce the self contained HTML report and post the file link with a short summary: Owner sprawl, high privilege service principals, classic administrators, and stale assignments.
+3. Produce the report with full ids and assignment scopes, assessment status and source links. Summarize known privilege configurations, custom roles needing review and unresolved principals, not proven stale assignments. Redundancy, inactivity and tenant sign ins are not implemented here.
 4. If a previous run exists in memory, call out newly added privileged access since the last sweep.
 
 Do not grant, change, or remove any access. Provide recommendations only, for a human to apply, ideally with just in time access through Privileged Identity Management.
+
+Use only the approved scheduled scope and explicit managed identity configuration described in SKILL.md. A new subscription or directory scope requires separate approval. Unknown principals and absence of observed ARM operations do not justify removal.

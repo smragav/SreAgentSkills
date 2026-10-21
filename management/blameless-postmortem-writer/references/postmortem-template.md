@@ -8,6 +8,9 @@ The structure the renderer expects, and the prompts to fill each part. Assemble 
 - incident_id: your tracking reference, if any.
 - severity: the incident severity your organisation uses (for example Sev2).
 - status: Resolved, or Monitoring if a follow up is still open.
+- assessment_status: Complete, Partial or Not assessed, describing evidence collection, not approval to share. Failed or unknown evidence must not be marked Complete.
+- sources: a list of `{title, url}` entries for the incident evidence.
+- collection_errors: a list of failed or incomplete evidence reads, when applicable.
 - summary: three or four sentences a busy reader can stop at. What happened, who or what was affected, how long, and how it was resolved.
 - impact: an object with
   - duration: from first symptom to all clear, and the time to detect and time to mitigate if known.
@@ -22,6 +25,8 @@ The structure the renderer expects, and the prompts to fill each part. Assemble 
 - action_items: a list of {action, owner, due, type}. type is Prevent, Detect, or Mitigate. Each item must be specific, owned, and dated, and should address an underlying weakness, not only the trigger.
 
 ## Minimal example
+
+All rendered documents remain drafts for human evidence and sharing review. Default output sanitizes identifiers and credentials; no automatic external send is performed. Use `--include-identifiers` only for an explicitly requested internal draft.
 
 ```
 {

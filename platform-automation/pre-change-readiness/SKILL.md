@@ -27,12 +27,18 @@ Use this skill when the user asks to:
 
 ## Workflow
 
-The scan tool (tools/readiness_check.py) and the shared report renderer (tools/report_render.py) are bundled with this skill. Run them with RunInTerminal using the Python in the agent runtime. Both authenticate with the agent managed identity.
+The scan tool (tools/readiness_check.py) and the shared report renderer (tools/report_render.py) are bundled with this skill. Run them with RunInTerminal using the Python in the agent runtime. The collector uses the configured identity; the local renderer does not authenticate to Azure.
 
 ### Phase 1: Check the target
 
 1. Run python tools/readiness_check.py "<subscription id>" [resource group] with RunInTerminal. It runs the reliability, exposure, and capacity checks in references/checks-catalog.md scoped to that target, assigns a severity to each finding, and prints a report_data object as JSON.
-2. It computes a verdict per category and overall: no-go when any Critical or High finding is present, caution when only Medium findings are present, go when the category is clean.
+2. Review per check assessment state before the verdict. Critical or High means NO-GO. Failed, empty capacity, missing or unknown scope reads mean INCOMPLETE and block GO. After complete reads, Medium means CAUTION and no findings means GO for these checks only.
+
+### Validation boundary
+
+The JSON includes `assessment_status`, `assessments` and `sources`. A clean finding list alone never permits GO. Inventory must confirm a visible target, all six configuration queries must finish and each observed region must return finite compute and network counters. This is not a change approval, allocation guarantee, full quota review, effective connectivity test or measured workload failover result. Confirm the approved subscription and resource group before running; playbook instructions do not enforce host access.
+
+Select the credential deterministically before collection: set `AZURE_CLIENT_ID` for a user assigned managed identity, or explicitly set `SRE_IDENTITY_MODE=system-assigned`. Local development requires `SRE_IDENTITY_MODE=developer` with no managed identity client ID. Authentication errors propagate without selecting another identity.
 
 ### Phase 2: Produce the report
 
@@ -41,10 +47,26 @@ The scan tool (tools/readiness_check.py) and the shared report renderer (tools/r
 
 ## Scenario coverage
 
-This skill also answers 2 customer scenarios in the Platform Automation category (failed deployments, export to ARM or Bicep). Open references/scenarios.md when the ask matches one of them: it holds the sample prompt, the run mode, and whether the skill covers it with built in checks or a guided read only prompt.
+This skill implements its documented checks, not every related scenario. Use the related skills for their complete evidence workflows. See [scenario routing](./references/scenarios.md).
+
 
 ## Expected output
 
 - Primary: a self contained HTML readiness report, with the overall and per category verdicts as cards, findings by category and severity, and the full table of what to clear.
 - Inline: the overall go, caution, or no-go, the per category verdicts, and the blocking findings.
 - Every finding names the resource, category, issue, severity, and recommended change. The skill reports readiness; it changes nothing.
+
+## Sources
+
+- [Azure quotas](https://learn.microsoft.com/en-us/azure/quotas/view-quotas).
+- [VM reliability](https://learn.microsoft.com/en-us/azure/reliability/reliability-virtual-machines).
+
+Regression validation uses mocked reads only. No Azure resources or deployments were queried during this correction.
+
+## Assessment and customer sharing
+
+Confirm the explicit customer scope and UTC window before collection. Accessible resources are not automatically approved scope. For a tool that enumerates all visible subscriptions, use an identity restricted to the approved scope or the related skill's scoped commands.
+
+Follow [assessment states and limits](./references/assessment-contract.md), [permissions](./references/permissions-and-scope.md), and [customer sharing review](./references/customer-sharing.md), bundled during deployment. The shared renderer produces a sanitized draft by default; `--include-identifiers` requires an explicitly approved customer audience. Review custom exports with the same checklist.
+
+Configure the host using [governance settings](./references/governance.json). General terminal access is not inherently read only. Never apply changes, schedule work, upload files or send messages without separate explicit approval.

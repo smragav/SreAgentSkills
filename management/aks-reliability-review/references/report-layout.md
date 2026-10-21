@@ -13,7 +13,9 @@ python tools/aks_review.py | python tools/report_render.py
 - summary_cards: clusters reviewed, clusters with findings, High findings, checks evaluated.
 - charts: findings by severity, and findings by subscription.
 - findings: columns cluster, subscription, resource_group, check, recommendation, severity. Each row carries a _band equal to its severity.
-- method_notes: the Kubernetes floor used, and any scope not assessed.
+- assessment_status: Complete, Partial or Not assessed. Unknown lifecycle or applicability prevents Complete.
+- sources: titled official URLs.
+- method_notes: lifecycle evidence requirements, support plan and patch limits, region applicability and scope not assessed. There is no permanent supported minor floor.
 
 ## Sections the renderer produces
 

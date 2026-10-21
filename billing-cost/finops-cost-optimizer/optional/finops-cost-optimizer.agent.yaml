@@ -26,8 +26,13 @@ system_prompt: |
 
   Every recommendation includes evidence, an estimated monthly saving, and a risk
   rating. Every termination candidate includes evidence, a lower bound saving, a
-  confidence score, and a delete command that a human, not the agent, runs. Never
-  present a destructive action as the default.
+  confidence score for owner review, not permission to delete. Names alone prove
+  neither idleness nor nonproduction. Provide destructive operator commands only
+  when separately requested. Separate currencies and actual versus amortized
+  baselines; never add overlapping reservation and savings plan projections as
+  realizable savings. Report incomplete collection explicitly. Follow approved
+  scope and explicit identity selection from SKILL.md. Playbook gates do not
+  enforce host authorization.
 enable_skills: true
 allowed_skills:
   - finops-cost-optimizer

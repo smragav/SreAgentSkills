@@ -30,17 +30,17 @@ az rest --method GET --url "https://management.azure.com/subscriptions/<id>/prov
 
 Watch public IP addresses, static public IPs, network interfaces, load balancers, network security groups, virtual networks, and public IP prefixes. Public IP exhaustion is a common cause of a failed scale out.
 
-## 3. Storage quota (per subscription)
+## 3. Storage quota (per subscription and region)
 
 ```
-az rest --method GET --url "https://management.azure.com/subscriptions/<id>/providers/Microsoft.Storage/usages?api-version=2018-07-01"
+az rest --method GET --url "https://management.azure.com/subscriptions/<id>/providers/Microsoft.Storage/locations/<region>/usages?api-version=2023-05-01"
 ```
 
 Watch the storage account count against the per subscription per region limit.
 
 ## Severity from utilization
 
-- Critical: utilization at or above 95 percent. A deployment or scale out is likely to fail now.
+- Critical: utilization at or above 95 percent. Compare planned demand with remaining headroom; utilization alone does not predict every deployment outcome.
 - High: at or above 90 percent.
 - Medium: at or above the threshold (80 percent by default) and below 90 percent.
 - Below the threshold: not reported.
@@ -49,4 +49,13 @@ Recommendation for any finding: request a quota increase for that counter in tha
 
 ## Tuning
 
-The threshold argument sets the reporting floor. Lower it (for example 70) ahead of a known launch to get an earlier warning. Counters with a limit of zero or an unlimited limit are skipped.
+The threshold must be greater than zero and at most 100. Lower it (for example 70) ahead of a launch for an earlier warning. Invalid, zero, unknown or unlimited limits are not healthy headroom. Such counters make coverage incomplete even though no percentage finding can be computed.
+
+Each endpoint records Complete, Partial or Not assessed. Failed reads, empty responses and unknown counters prevent an overall Complete. Empty region discovery is Not assessed. Discovery uses only regions present in visible inventory, not all intended deployment regions, and these usage APIs do not cover every Azure service limit or guarantee physical capacity.
+
+## Sources and validation
+
+- [Storage regional usages API](https://learn.microsoft.com/en-us/rest/api/storagerp/usages/list-by-location?view=rest-storagerp-2023-05-01), checked 2026-10-21.
+- [View quotas](https://learn.microsoft.com/en-us/azure/quotas/view-quotas).
+
+Regression tests mock all reads. Endpoint response shape, live quotas and deployment success were not validated.

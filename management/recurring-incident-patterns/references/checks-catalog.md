@@ -2,7 +2,7 @@
 
 Recurring incident signals read from Azure Monitor alerts and the Activity Log resource health events, covered by Reader. The scan tool reads and aggregates these over the window.
 
-For each repeat offender the tool records: resource, resource type, the incident count, the signals (alerts and health degradations), a severity from the count, and the recommended focus.
+For each repeat offender the tool records resource, type, resource signal count, separate alert and health counts, and a heuristic review priority. This is not an incident count.
 
 ## Read the fired alerts
 
@@ -22,15 +22,21 @@ The tool keeps the ResourceHealth events where the current health status is Unav
 
 ## Aggregate and rank
 
-- Incident count per resource equals its alert count plus its health degradation count over the window.
+- Resource signal count equals alert count plus health degradation count. Duplicate IDs within each source are removed; cross source correlation into incidents is not implemented.
 - A resource at or above the repeat threshold (three by default) is a repeat offender.
-- Severity by incident count: ten or more High, five to nine Medium, three to four Low.
+- Review priority by signal count: ten or more High, five to nine Medium, three to four Low. This is not business impact severity.
 - Offenders are grouped by resource type, so a pattern across many resources of one type is visible.
 
 ## Window and threshold
 
-Thirty days is the default window, mapped to the Azure Monitor short ranges (1d, 7d, or 30d) for alerts. The repeat threshold is three incidents. Widen the window to see chronic patterns, or lower the threshold to catch emerging ones.
+Thirty days is the default. Pass exactly 1, 7 or 30 days; other values are rejected rather than silently rounded. Both sources use the same explicit UTC start and end. Alerts use `customTimeRange=start/end` (not together with `timeRange`); Activity Log uses both `ge` and `le` timestamp filters. Each source stops at 40 pages, with outstanding continuation marked incomplete. The repeat threshold is three signals.
 
 ## Recommended focus
 
 For each offender, the recommendation points at the durable fix rather than another alert: for a resource that keeps going Unavailable, review its redundancy and dependencies; for one that keeps firing the same alert, tune the workload or the threshold. The value is directing reliability investment to where it pays back.
+
+## Sources
+
+- [Alert instance retention](https://learn.microsoft.com/azure/azure-monitor/alerts/alerts-manage-alert-instances), verified: alerts have a 30 day retention period.
+- [Activity Log](https://learn.microsoft.com/azure/azure-monitor/essentials/activity-log).
+- [Alert custom time ranges](https://learn.microsoft.com/python/api/azure-mgmt-alertsmanagement/azure.mgmt.alertsmanagement.operations.alertsoperations), verified: ISO start/end, within 30 days, mutually exclusive with `timeRange`.

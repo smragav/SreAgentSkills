@@ -1,6 +1,6 @@
 # Checks catalog
 
-Observability wiring signals, read with Azure Resource Graph where it can answer across every accessible subscription, and with a per resource read where it cannot. All are covered by Reader.
+Observability configuration signals, read with Resource Graph for inventory and alert rules, and with resource API calls for diagnostic settings. Validate effective permissions and record denied reads as not assessed.
 
 For each finding the tool records: resource id, resource type, subscription, resource group, the missing wiring, a severity, and the recommended fix.
 
@@ -12,57 +12,55 @@ These are the types worth monitoring. The scan enumerates them; adjust the list 
 az graph query -q "resources | where type in~ ('microsoft.compute/virtualmachines','microsoft.web/sites','microsoft.sql/servers/databases','microsoft.storage/storageaccounts','microsoft.keyvault/vaults','microsoft.containerservice/managedclusters','microsoft.network/applicationgateways','microsoft.network/loadbalancers','microsoft.documentdb/databaseaccounts','microsoft.cache/redis','microsoft.servicebus/namespaces','microsoft.eventhub/namespaces','microsoft.dbforpostgresql/flexibleservers','microsoft.dbformysql/flexibleservers','microsoft.apimanagement/service','microsoft.containerregistry/registries','microsoft.network/azurefirewalls') | project name, id, type, resourceGroup, subscriptionId, location" --first 1000
 ```
 
-## 1. No metric alert (Medium)
+## 1. No enabled alert candidate with routing (Medium)
 
-Build the set of resources covered by a metric alert from the alert scopes, then flag important resources not in it.
-
-```
-az graph query -q "resources | where type =~ 'microsoft.insights/metricalerts' | mv-expand scope = properties.scopes | project alert=name, scope=tolower(tostring(scope))" --first 1000
-```
-
-A resource is covered when its id, its resource group, or its subscription appears as an alert scope. Fix: add a metric alert on the key signals for the resource (for example CPU and availability), targeting an action group.
-
-## 2. No diagnostic settings (High)
-
-Diagnostic settings route resource logs and metrics to a workspace, storage, or Event Hub. Without them the resource is effectively blind.
-
-Bulk check where Resource Graph can answer:
+Inspect enabled state, supported alert type, configured actions and scope. An exact resource scope is a candidate. Broad scopes require matching target resource type metadata. Metric, scheduled query and Activity Log rules are considered, but conditions and workload applicability still need review.
 
 ```
-az graph query -q "resources | where type =~ 'microsoft.insights/diagnosticsettings' | extend parentId = tolower(substring(id, 0, indexof(id, '/providers/microsoft.insights/diagnosticsettings'))) | distinct parentId" --first 1000
+az graph query -q "resources | where type in~ ('microsoft.insights/metricalerts','microsoft.insights/scheduledqueryrules','microsoft.insights/activitylogalerts') | project id, type, properties" --first 1000
 ```
 
-If that returns nothing in your tenant, verify per resource instead:
+A scope reference alone is not proof of coverage. Verify rule criteria, action group receivers, suppression and actual delivery. Workspace scoped log rules require additional analysis before concluding resource coverage.
+
+## 2. No usable diagnostic routing observed (High)
+
+Require a configured destination and at least one enabled log or metric category. No diagnostic setting does not mean no telemetry: platform metrics, agents and other collection paths can exist.
+
+Resource Graph alone cannot conclusively enumerate diagnostic settings. Read each resource:
 
 ```
 az monitor diagnostic-settings list --resource <resource id>
 ```
 
-Fix: add a diagnostic setting that sends the platform logs and metrics to the central Log Analytics workspace.
+The collector checks at most 200 resources. Denied or unsupported reads and cap exclusions are unknown. The diagnostic summary is Unknown if any resources remain unassessed. Verify category requirements, destination access and delivery before proposing changes.
 
-## 3. No action group in the subscription (High)
+## 3. Cross subscription destinations
 
-An alert with nowhere to send a notification is silent.
+A workspace or action group need not exist locally. Assess the destination referenced by each setting or rule, including cross subscription destinations. Absence of a local object is not a finding.
 
 ```
 az graph query -q "resources | where type =~ 'microsoft.insights/actiongroups' | summarize count() by subscriptionId" --first 1000
 ```
 
-A subscription that has resources but no action group gets one finding. Fix: create at least one action group so alerts can notify a team.
+This inventory query is contextual only, never evidence that alerts cannot notify.
 
-## 4. No Log Analytics workspace in the subscription (Medium)
+## 4. Workspace inventory (context only)
 
 ```
 az graph query -q "resources | where type =~ 'microsoft.operationalinsights/workspaces' | summarize count() by subscriptionId" --first 1000
 ```
 
-A subscription with resources but no workspace has nowhere central to land logs. Fix: create a workspace and point diagnostic settings at it.
+A resource can route logs to another subscription or a supported non workspace destination. Do not recommend a new workspace solely because none is local.
 
 ## Severity
 
-- No diagnostic settings: High. The resource emits nothing to central logging.
-- No action group in the subscription: High. Alerts cannot notify.
-- No metric alert: Medium. The resource is logged but not actively watched.
-- No workspace in the subscription: Medium. Structural gap that blocks central logging.
+- No usable diagnostic routing observed: High configuration review priority, not proof of blindness.
+- No enabled alert candidate with actions: Medium configuration review priority.
+- Unknown collection: no gap verdict. Report Partial or Not assessed.
 
 Combine per resource: a resource missing several pieces gets one finding listing them, at the highest severity among them.
+
+## Sources
+
+- [Diagnostic settings](https://learn.microsoft.com/azure/azure-monitor/essentials/diagnostic-settings), verified: destinations need not be in the resource subscription.
+- [Metric alert overview](https://learn.microsoft.com/azure/azure-monitor/alerts/alerts-metric-overview).

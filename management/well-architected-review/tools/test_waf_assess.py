@@ -43,6 +43,53 @@ def test_build_report_data_marks_unassessed_pillars():
     assert values["Security"] == "n/a"
 
 
+def test_custom_score_discloses_not_official_and_skipped_coverage():
+    assessed = [{"pillar": "Reliability", "name": "one", "severity": "High", "applicable": 4, "failing": 0, "recommendation": "review"}]
+    data = wa.build_report_data(assessed, 1, [])
+    assert "not an official Microsoft" in data["subtitle"]
+    assert data["coverage"]["skipped"] == 12
+    assert data["assessment_status"] == "Partial"
+    assert "partial coverage" in data["summary_cards"][0]["sub"]
+
+
+def test_unknown_lifecycle_never_contributes_pass_score():
+    counts = wa.assess_lifecycle_rows([{"properties": {"kubernetesVersion": "1.99.0", "supportPlan": "KubernetesOfficial"}}], {})
+    assert {k: counts[k] for k in ("applicable", "failing", "unknown")} == {"applicable": 1, "failing": 0, "unknown": 1}
+    assert counts["lifecycle_reasons"]
+    scores = wa.score_pillars([{"pillar": "Operational Excellence", "severity": "Medium", **counts}])
+    assert scores["Operational Excellence"] is None
+
+
+def test_failed_all_checks_is_not_assessed_and_skipped():
+    from unittest.mock import patch
+    with patch.object(wa, "_headers", return_value={}), patch.object(wa, "_count_subscriptions", return_value=1), patch.object(wa, "_run_graph", side_effect=RuntimeError("denied")):
+        data = wa.main()
+    assert data["assessment_status"] == "Not assessed"
+    assert data["coverage"]["skipped"] == 13
+
+
+def test_no_permanent_kubernetes_floor_in_queries():
+    assert not any("minor < 28" in c["kql"] for c in wa.CHECKS)
+
+
+def test_missing_fields_are_counted_unknown_in_score_queries():
+    for name in ("Locally redundant storage", "Premium SQL without zone redundancy", "Container Apps that cannot scale out"):
+        check = next(c for c in wa.CHECKS if c["name"] == name)
+        assert "unknown=countif(" in wa.check_query(check)
+    network = next(c for c in wa.CHECKS if c["name"] == "PaaS with public network access")
+    assert "properties.network.publicNetworkAccess" in wa.check_query(network)
+
+
+def test_snapshot_load_failure_reason_reaches_report_notes():
+    from unittest.mock import patch
+    with patch("lifecycle.load_evidence", return_value={"_evidence_error": {"code": "SnapshotMalformed", "reason": "Configured lifecycle snapshot is not valid UTF-8 JSON."}}):
+        counts = wa.assess_lifecycle_rows([{"properties": {"kubernetesVersion": "1.34", "supportPlan": "KubernetesOfficial"}}])
+    check = next(c for c in wa.CHECKS if c.get("lifecycle"))
+    data = wa.build_report_data([{**check, **counts}], 1, [])
+    assert data["assessment_status"] == "Partial"
+    assert any("not valid UTF-8 JSON" in note for note in data["method_notes"])
+
+
 if __name__ == "__main__":
     for name, function in sorted(globals().items()):
         if name.startswith("test_") and callable(function):

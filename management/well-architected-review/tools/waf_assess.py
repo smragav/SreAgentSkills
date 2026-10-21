@@ -13,6 +13,15 @@ be unit tested without them. See references/checks-catalog.md.
 """
 
 import json
+import sys
+from pathlib import Path
+
+for _parent in Path(__file__).resolve().parents:
+    _tools = _parent / "shared" / "tools"
+    if (_tools / "azure_http.py").is_file():
+        sys.path.insert(0, str(_tools))
+        break
+from lifecycle import aks_support_plan, lifecycle_status
 
 ARM_ENDPOINT = "https://management.azure.com"
 SEVERITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
@@ -54,9 +63,10 @@ CHECKS = [
     {"pillar": "Operational Excellence", "name": "Resources with no owner tag", "severity": "Medium",
      "recommendation": "Apply an owner tag; enforce with Azure Policy. Deep dive: tag-governance-compliance.",
      "kql": "resources | summarize applicable=count(), failing=countif(isempty(tostring(tags['owner'])) and isempty(tostring(tags['Owner'])))"},
-    {"pillar": "Operational Excellence", "name": "AKS below the supported version floor", "severity": "Medium",
-     "recommendation": "Upgrade AKS to a supported version. Deep dive: deprecation-retirement-tracker.",
-     "kql": "resources | where type =~ 'microsoft.containerservice/managedclusters' | extend minor = toint(split(tostring(properties.kubernetesVersion), '.')[1]) | summarize applicable=count(), failing=countif(minor < 28)"},
+    {"pillar": "Operational Excellence", "name": "AKS outside verified lifecycle dates", "severity": "Medium",
+     "recommendation": "Verify lifecycle snapshot, checked date, regional versions and LTS support plan. Deep dive: deprecation-retirement-tracker.",
+     "lifecycle": True,
+     "kql": "resources | where type =~ 'microsoft.containerservice/managedclusters' | project name, id, properties, sku"},
 
     {"pillar": "Performance Efficiency", "name": "App Service plans on Free, Shared, or Basic", "severity": "Medium",
      "recommendation": "Move production workloads to Standard or higher. Deep dive: appservice-containerapps-health.",
@@ -65,6 +75,35 @@ CHECKS = [
      "recommendation": "Raise maxReplicas and set a scale rule.",
      "kql": "resources | where type =~ 'microsoft.app/containerapps' | summarize applicable=count(), failing=countif(toint(properties.template.scale.maxReplicas) == 1)"},
 ]
+
+# Unknown fields are excluded from the custom score, not treated as passing.
+REQUIRED_FIELDS = {
+    "VMs without zone or availability set": "array_length(zones) > 0 or isnotnull(properties.availabilitySet)",
+    "Locally redundant storage": "isempty(tostring(sku.name))",
+    "Premium SQL without zone redundancy": "isnull(properties.zoneRedundant)",
+    "Single region Cosmos DB": "isnull(properties.locations)",
+    "Storage with anonymous blob access": "isnull(properties.allowBlobPublicAccess)",
+    "PaaS with public network access": "isempty(tostring(public_access))",
+    "Key Vaults without purge protection": "isnull(properties.enablePurgeProtection)",
+    "Unattached managed disks": "isempty(tostring(properties.diskState))",
+    "App Service plans on Free, Shared, or Basic": "isempty(tostring(sku.tier))",
+    "Container Apps that cannot scale out": "isnull(properties.template.scale.maxReplicas)",
+}
+
+
+def check_query(check):
+    query = check["kql"]
+    if check["name"] == "PaaS with public network access":
+        query = query.replace(
+            "| summarize",
+            "| extend public_access = iff(type in~ ('microsoft.dbforpostgresql/flexibleservers','microsoft.dbformysql/flexibleservers'), tostring(properties.network.publicNetworkAccess), tostring(properties.publicNetworkAccess)) | summarize",
+        ).replace("tostring(properties.publicNetworkAccess) =~ 'Enabled'", "public_access =~ 'Enabled'")
+    if check["name"] == "Key Vaults without purge protection":
+        query = query.replace("!~ 'true'", "=~ 'false'")
+    missing = REQUIRED_FIELDS.get(check["name"])
+    if missing:
+        query = query.replace("summarize applicable=count(),", f"summarize applicable=count(), unknown=countif({missing}),")
+    return query
 
 
 def rating(score):
@@ -87,10 +126,13 @@ def score_pillars(assessed):
     """
     weighted, total = {}, {}
     for check in assessed:
-        if not check.get("applicable"):
+        if check.get("state") == "Not assessed":
+            continue
+        known = check.get("applicable", 0) - check.get("unknown", 0)
+        if known <= 0:
             continue
         weight = WEIGHTS.get(check["severity"], 1)
-        pass_ratio = (check["applicable"] - check["failing"]) / check["applicable"]
+        pass_ratio = (known - check["failing"]) / known
         weighted[check["pillar"]] = weighted.get(check["pillar"], 0.0) + weight * pass_ratio
         total[check["pillar"]] = total.get(check["pillar"], 0.0) + weight
     scores = {}
@@ -104,7 +146,7 @@ def build_report_data(assessed, subs_scanned, notes):
     findings = []
     for check in assessed:
         if check.get("applicable") and check.get("failing"):
-            applicable, failing = check["applicable"], check["failing"]
+            applicable, failing = check["applicable"] - check.get("unknown", 0), check["failing"]
             pass_rate = round(100 * (applicable - failing) / applicable)
             findings.append({
                 "pillar": check["pillar"], "check": check["name"], "applicable": applicable, "failing": failing,
@@ -116,7 +158,12 @@ def build_report_data(assessed, subs_scanned, notes):
     cards = []
     for pillar in PILLARS:
         score = scores.get(pillar)
-        cards.append({"label": pillar, "value": (str(score) if score is not None else "n/a"), "sub": rating(score)})
+        definitions = sum(c["pillar"] == pillar for c in CHECKS)
+        evaluated = sum(c["pillar"] == pillar and c.get("state") != "Not assessed" for c in assessed)
+        unknown = sum(c.get("unknown", 0) for c in assessed if c["pillar"] == pillar)
+        coverage = f"{evaluated}/{definitions} checks read; {unknown} unknown resources"
+        cards.append({"label": pillar, "value": (str(score) if score is not None else "n/a"),
+                      "sub": f"{rating(score)}; {coverage}, partial coverage" if evaluated < definitions or unknown else f"{rating(score)}; {coverage}"})
     score_items = [{"name": pillar, "value": scores[pillar]} for pillar in PILLARS if scores.get(pillar) is not None]
     sev_counts = {}
     for finding in findings:
@@ -124,8 +171,18 @@ def build_report_data(assessed, subs_scanned, notes):
     sev_items = [{"name": b, "value": sev_counts[b], "band": b} for b in ("Critical", "High", "Medium", "Low") if b in sev_counts]
 
     return {
+        "assessment_status": ("Not assessed" if not any(c.get("applicable", 0) for c in assessed)
+                              else "Partial" if notes or len(assessed) < len(CHECKS) or any(c.get("unknown") or c.get("state") == "Not assessed" for c in assessed) else "Complete"),
+        "coverage": {
+            "definitions": len(CHECKS),
+            "read": sum(c.get("state") != "Not assessed" for c in assessed),
+            "skipped": len(CHECKS) - sum(c.get("state") != "Not assessed" for c in assessed),
+            "unknown_resources": sum(c.get("unknown", 0) for c in assessed),
+        },
+        "sources": [{"title": "Microsoft Well Architected Framework", "url": "https://learn.microsoft.com/en-us/azure/well-architected/"},
+                    {"title": "AKS lifecycle", "url": "https://learn.microsoft.com/en-us/azure/aks/supported-kubernetes-versions"}],
         "title": "Well-Architected Review",
-        "subtitle": "Azure Well-Architected Framework scorecard across five pillars.",
+        "subtitle": "Custom 13 check configuration indicator, not an official Microsoft Well Architected assessment or score.",
         "meta": {"window": "Point in time", "scope": f"{subs_scanned} subscription(s)", "source": "Azure Resource Graph"},
         "summary_cards": cards,
         "charts": [
@@ -138,7 +195,11 @@ def build_report_data(assessed, subs_scanned, notes):
             "rows": findings,
         },
         "method_notes": notes + [
+            f"AKS lifecycle: {reason}" for check in assessed for reason in check.get("lifecycle_reasons", [])
+        ] + [
             "Score is the weighted pass ratio per pillar. Weights: Critical 4, High 3, Medium 2, Low 1.",
+            "Custom selection and scoring only, not Microsoft's assessment methodology, certification or full workload review. High scores can coexist with skipped and unknown coverage.",
+            "Unknown resources and failed checks are excluded from the numerical denominator, never counted as passing. Read coverage is shown separately.",
             "Ratings: Excellent 90 and above, Good 75 to 89, Fair 50 to 74, Poor below 50.",
             "This is a roll up; each check names the dedicated skill with the full detail.",
         ],
@@ -153,17 +214,25 @@ def _headers():
 
 
 def _run_graph(headers, query):
-    import requests
+    import azure_http as requests
 
     url = f"{ARM_ENDPOINT}/providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01"
-    payload = {"query": query, "options": {"resultFormat": "objectArray"}}
-    response = requests.post(url, headers=headers, json=payload, timeout=120)
-    response.raise_for_status()
-    return response.json().get("data", [])
+    rows, skip_token = [], None
+    while True:
+        payload = {"query": query, "options": {"resultFormat": "objectArray", "top": 1000}}
+        if skip_token:
+            payload["options"]["$skipToken"] = skip_token
+        response = requests.post(url, headers=headers, json=payload, timeout=120)
+        response.raise_for_status()
+        body = response.json()
+        rows.extend(body.get("data", []))
+        skip_token = body.get("$skipToken")
+        if not skip_token:
+            return rows
 
 
 def _count_subscriptions(headers):
-    import requests
+    import azure_http as requests
 
     url = f"{ARM_ENDPOINT}/subscriptions?api-version=2022-12-01"
     total = 0
@@ -176,6 +245,21 @@ def _count_subscriptions(headers):
     return total
 
 
+def assess_lifecycle_rows(rows, evidence=None, today=None):
+    states, reasons = [], set()
+    for row in rows:
+        props = row.get("properties") or {}
+        version = ".".join(str(props.get("currentKubernetesVersion") or props.get("kubernetesVersion") or "").split(".")[:2])
+        status = lifecycle_status("aks", version, aks_support_plan(props, row.get("sku") or {}), evidence, today)
+        states.append(status["status"])
+        if status["status"] == "Unknown":
+            reasons.add(status["reason"])
+    result = {"applicable": len(states), "failing": states.count("Unsupported"), "unknown": states.count("Unknown")}
+    if reasons:
+        result["lifecycle_reasons"] = sorted(reasons)
+    return result
+
+
 def main() -> dict:
     headers = _headers()
     notes = []
@@ -183,15 +267,22 @@ def main() -> dict:
         subs = _count_subscriptions(headers)
     except Exception:  # noqa: BLE001
         subs = 0
+        notes.append("Subscription visibility could not be confirmed.")
 
     assessed = []
     for check in CHECKS:
         try:
-            rows = _run_graph(headers, check["kql"])
-            row = rows[0] if rows else {}
-            assessed.append({**check, "applicable": int(row.get("applicable", 0) or 0), "failing": int(row.get("failing", 0) or 0)})
+            rows = _run_graph(headers, check_query(check))
+            if check.get("lifecycle"):
+                assessed.append({**check, **assess_lifecycle_rows(rows)})
+            else:
+                if not rows or "applicable" not in rows[0] or "failing" not in rows[0]:
+                    raise ValueError("Missing count result")
+                row = rows[0]
+                assessed.append({**check, "applicable": int(row["applicable"]), "failing": int(row["failing"]), "unknown": int(row.get("unknown", 0))})
         except Exception:  # noqa: BLE001
             notes.append(f"Check skipped (not readable): {check['name']}.")
+            assessed.append({**check, "applicable": 0, "failing": 0, "state": "Not assessed"})
     return build_report_data(assessed, subs, notes)
 
 

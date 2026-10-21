@@ -61,7 +61,7 @@ az graph query -q "resources | where type =~ 'microsoft.network/loadbalancers' |
 Storage stays out of the termination set. Deleting a storage account is high
 risk, so redundancy and lifecycle savings for storage remain recommendations in
 the checks catalog, not termination candidates. Orphaned disks and standalone
-snapshots above already cover the safe storage deletions.
+snapshots above are review candidates, not safe deletion conclusions.
 
 ## Score confidence to terminate
 
@@ -84,15 +84,17 @@ Naming adjustment, strongest signal wins:
 - Disaster recovery or replica patterns (asr, replica, dr, recoveryvault): cap the score at 20 (Low). Do not propose termination without verified decommissioning.
 - Shared network infrastructure (fw, azfw, firewall, natgw, nat, bastion, gateway, hub, shared): subtract 45.
 - Hybrid or integration patterns (onprem, hybrid, adds, dc0, domaincontroller): subtract 15.
-- Disposable patterns (lab, demo, test, poc, temp, sandbox, spot): add 10.
+- Disposable looking names (lab, demo, test, poc, temp, sandbox, spot): no positive score adjustment. Names do not prove nonproduction or idleness. Confirm the environment and workload owner.
 
 Bands: 90 or above Very high, 70 to 89 High, 50 to 69 Medium, below 50 Low.
 
 Optional metric refinement, only when Azure Monitor is readable: for a running
 virtual machine, average CPU below 5 percent and low network over 30 days is a
 weak idle signal. Treat it as Medium at most and never as a delete default. If
-Monitor metrics or Activity Logs are not readable, skip this refinement, rely on
-association, age, and naming only, and record the limitation in the report.
+Monitor metrics or Activity Logs are not readable, skip this refinement and mark
+idleness unknown. Association and age still provide review evidence, not proof
+that deletion is safe. No score substitutes for owner approval, dependency
+checks, retention and recovery requirements, locks, or change approval.
 
 ## Price conservatively
 
@@ -103,8 +105,9 @@ monthly figure. Label every estimate as a lower bound.
   provisioned capacity at the baseline included performance (3000 IOPS, 125 MBps)
   when exact provisioned IOPS and throughput are unknown, and say so in saving_note.
 - Snapshot: snapshot storage meter times the size in GB.
-- Public IP: the Standard static public IP hourly meter times 730. If the live
-  meter lookup fails, use a conservative flat 3.65 per month and say so.
+- Public IP: the applicable live meter times the stated billing hours assumption.
+  If the meter lookup fails, mark the resource unpriced and exclude the estimate;
+  do not insert a flat price without currency or source.
 - Network interface: no separate hourly charge. Set monthly_saving to 0 and keep
   it as a cleanup candidate.
 - Deallocated virtual machine: direct compute saving is 0 because compute is
@@ -116,7 +119,10 @@ monthly figure. Label every estimate as a lower bound.
 
 ## Delete command
 
-Always the read only safe form, using the full resource id:
+Deletion is destructive, not a read only check. Only an authorized operator may
+prepare and run a command after owner, dependency, recovery and change approval.
+The renderer does not build commands automatically from ids. If an operator
+requests a command, retain the exact full resource id:
 
 ```
 az resource delete --ids '<full resource id>'
@@ -141,3 +147,10 @@ renders:
 - next_step: the recommended check before deleting.
 - delete_command: the az resource delete command above.
 - excluded and exclusion_reason: set when the resource could not be priced.
+
+## Sources
+
+- [Cost Management query properties and pagination](https://learn.microsoft.com/javascript/api/@azure/arm-costmanagement/queryproperties)
+- [Cost Management access boundaries](https://learn.microsoft.com/azure/cost-management-billing/costs/assign-access-acm-data)
+
+The scoring rubric is a local review heuristic, not a Microsoft safety guarantee.

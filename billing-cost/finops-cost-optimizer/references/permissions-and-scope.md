@@ -15,11 +15,11 @@ The skill never performs the role assignment itself. It has no write or role man
 
 If the user declines, or does not grant access, the skill skips the denied check, records it in the report as not assessed because of insufficient access, and continues with everything it can read.
 
-## Reads used, all covered by Reader
+## Reads and source specific access
 
 - Subscription enumeration: the list of subscriptions the identity can see.
-- Cost: the Cost Management query at subscription scope. Reader can read cost data at subscription and resource group scope.
-- Cost fallback: if a tenant blocks the Cost Management query action, the cost_rank tool falls back to the Consumption usage details read, which is a plain read covered by Reader.
+- Cost: the Cost Management query at subscription scope requires applicable cost access. Do not assume every Reader principal can read costs: agreement type and billing policies can restrict visibility.
+- Cost fallback: Consumption usage details is attempted if Cost Management fails. It can also be denied or unsupported, and is not an equivalent amortized baseline.
 - Advisor cost recommendations.
 - Azure Monitor metrics.
 - Reservation recommendations. Savings plan recommendations are best effort and may return nothing under Reader in some tenants.
@@ -32,3 +32,14 @@ Cost figures here come from resource and subscription scope queries. Enrollment 
 ## Identity setup for the Python tools
 
 The cost_rank and commitment_recommendations tools call Azure Resource Manager. Enable managed identity with the ARM scope on each tool in the Identity tab when you create it in the Builder.
+
+Select `AZURE_CLIENT_ID` for a specific user assigned managed identity or
+`SRE_IDENTITY_MODE=system-assigned` for system assigned managed identity.
+`SRE_IDENTITY_MODE=developer` explicitly opts into the local developer credential
+chain. Missing selection fails closed; no discovery or silent fallback occurs.
+Approve the intended subscription scope before collection. These playbook gates
+are not enforcement of host tool authorization.
+
+## Sources
+
+- [Cost access depends on role, agreement and policy](https://learn.microsoft.com/azure/cost-management-billing/costs/assign-access-acm-data)

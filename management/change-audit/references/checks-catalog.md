@@ -17,7 +17,7 @@ Each event carries eventTimestamp, operationName, status, caller, resourceId, re
 
 ## Correlate change to effect
 
-For each health degradation, the tool looks for changes on the same resource, or in the same resource group, within the preceding window (two hours by default). When it finds one, it emits a finding:
+For each health degradation, the tool looks for a change on the same full resource ID, or with both the same subscription and resource group, within the preceding two hours. Resource group proximity is not a verified dependency. Identical group names across subscriptions must never correlate.
 
 - Change preceded a health degradation (High): a change was applied to the resource (or its resource group) shortly before it went Unavailable or Degraded. Note records the degradation and the time gap. This is the headline signal.
 
@@ -30,8 +30,14 @@ Changes not linked to a degradation are still worth a look when they are:
 - A delete (Medium): a resource was deleted. Confirm it was intended.
 - A failed change (Medium): a write or action returned Failed. A failed change can leave a resource half configured.
 
-Other successful changes are counted in the summary but not listed individually, to keep the report focused on what matters.
+All collected writes, deletes and actions are retained individually, including successful unlinked changes. Summary totals cover linked records too.
 
 ## Window
 
 Seven days is the default read window. The correlation window (how far before a degradation to look for a change) is two hours by default. Widen the read window for a broad audit, or narrow it to the hours around a known incident.
+
+Collection follows at most 40 pages per subscription. Outstanding continuation and query failures must be reported as incomplete. Activity Log does not provide a complete data plane, guest or SQL statement audit.
+
+## Sources
+
+- [Activity Log](https://learn.microsoft.com/azure/azure-monitor/essentials/activity-log), verified: control plane operations.
